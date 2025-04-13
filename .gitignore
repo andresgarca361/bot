@@ -1,0 +1,6 @@
+price_history.json
+stats.csv
+bot.log
+bot.log.*
+__pycache__/
+*.pyc
