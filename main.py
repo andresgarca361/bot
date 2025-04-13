@@ -621,7 +621,14 @@ if __name__ == "__main__":
         initialize_price_history()  # Load or fetch prices at startup
         with open('stats.csv', 'w') as f:
             f.write("timestamp,portfolio_value,total_trades,wins,losses,total_profit,win_rate,profit_factor,drawdown\n")
-        main()
+        while True:
+            try:
+                main()  # Run bot's main loop
+            except Exception as e:
+                log(f"Main loop crashed, restarting: {e}")
+                time.sleep(10)  # Wait 10s before restart
+                initialize_price_history()  # Reload prices
+                continue
     except KeyboardInterrupt:
         log("Bot stopped by user")
         portfolio_value = get_portfolio_value(state['price_history'][-1] if state['price_history'] else 0)
