@@ -14,6 +14,8 @@ from solders.transaction import Transaction
 from base64 import b64decode
 from tenacity import retry, stop_after_attempt, wait_exponential
 from ratelimit import limits, sleep_and_retry
+import socket
+import threading
 
 # Logging setup
 logger = logging.getLogger('TradingBot')
@@ -597,9 +599,25 @@ def main():
         log(f"Sleeping for {sleep_time:.1f}s")
         time.sleep(sleep_time)
 
+def tcp_health_check():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('0.0.0.0', 8000))
+    server.listen(1)
+    log("TCP health check listening on port 8000...")
+    while True:
+        try:
+            client, addr = server.accept()
+            client.close()
+        except Exception as e:
+            log(f"TCP health error: {e}")
+
 if __name__ == "__main__":
     log("Bot initializing...")
     try:
+        # Start TCP health check thread
+        health_thread = threading.Thread(target=tcp_health_check, daemon=True)
+        health_thread.start()
         initialize_price_history()  # Load or fetch prices at startup
         with open('stats.csv', 'w') as f:
             f.write("timestamp,portfolio_value,total_trades,wins,losses,total_profit,win_rate,profit_factor,drawdown\n")
