@@ -613,6 +613,19 @@ def tcp_health_check():
         except Exception as e:
             log(f"TCP health error: {e}")
 
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+        log("Ping received to keep bot awake")
+
+def http_server():
+    server = HTTPServer(('0.0.0.0', 80), SimpleHandler)
+    log("HTTP server listening on port 80 for pings...")
+    server.serve_forever()
+
 
 if __name__ == "__main__":
     log("Bot initializing...")
@@ -620,6 +633,9 @@ if __name__ == "__main__":
         # Start TCP health check thread
         health_thread = threading.Thread(target=tcp_health_check, daemon=True)
         health_thread.start()
+        # Start HTTP server thread for pings
+        http_thread = threading.Thread(target=http_server, daemon=True)
+        http_thread.start()
         initialize_price_history()
         with open('stats.csv', 'w') as f:
             f.write("timestamp,portfolio_value,total_trades,wins,losses,total_profit,win_rate,profit_factor,drawdown\n")
