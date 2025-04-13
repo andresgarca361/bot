@@ -16,6 +16,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from ratelimit import limits, sleep_and_retry
 import socket
 import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Logging setup
 logger = logging.getLogger('TradingBot')
@@ -612,22 +613,42 @@ def tcp_health_check():
         except Exception as e:
             log(f"TCP health error: {e}")
 
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+            log("Health ping received")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def http_keep_alive():
+    server = HTTPServer(('0.0.0.0', 8080), PingHandler)
+    log("HTTP keep-alive listening on port 8080...")
+    server.serve_forever()
+
 if __name__ == "__main__":
     log("Bot initializing...")
     try:
         # Start TCP health check thread
         health_thread = threading.Thread(target=tcp_health_check, daemon=True)
         health_thread.start()
-        initialize_price_history()  # Load or fetch prices at startup
+        # Start HTTP keep-alive thread
+        http_thread = threading.Thread(target=http_keep_alive, daemon=True)
+        http_thread.start()
+        initialize_price_history()
         with open('stats.csv', 'w') as f:
             f.write("timestamp,portfolio_value,total_trades,wins,losses,total_profit,win_rate,profit_factor,drawdown\n")
         while True:
             try:
-                main()  # Run bot's main loop
+                main()
             except Exception as e:
                 log(f"Main loop crashed, restarting: {e}")
-                time.sleep(10)  # Wait 10s before restart
-                initialize_price_history()  # Reload prices
+                time.sleep(10)
+                initialize_price_history()
                 continue
     except KeyboardInterrupt:
         log("Bot stopped by user")
