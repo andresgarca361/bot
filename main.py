@@ -71,6 +71,7 @@ SLIPPAGE = 0.003  # 0.3%
 MIN_TRADE_USD = 1.0
 MAX_POSITION_SOL = 3.0
 MAX_DRAWDOWN = 15.0  # %
+MIN_SOL_THRESHOLD = 0.01  # Ensure SOL balance never goes below 0.01 SOL
 
 # Client setup
 log("Initializing Solana client...")
@@ -451,10 +452,18 @@ def set_sell_targets(position_size, entry_price):
 
 def execute_sell(amount, price):
     log(f"Executing sell: {amount:.4f} SOL @ ${price:.2f}")
+    total_sol_balance = get_sol_balance()  # Fetch total SOL balance
     if not price:
         log("No price, aborting sell")
         return
-    amount_sol = int(amount * 1e9)
+    # Check if selling the amount would bring balance below MIN_SOL_THRESHOLD
+    remaining_sol = total_sol_balance - amount
+    if remaining_sol < MIN_SOL_THRESHOLD:
+        amount_to_sell = max(0, total_sol_balance - MIN_SOL_THRESHOLD)  # Adjust to leave at least 0.01 SOL
+        log(f"Adjusted sell to {amount_to_sell:.4f} SOL to maintain minimum balance of {MIN_SOL_THRESHOLD:.4f} SOL")
+    else:
+        amount_to_sell = amount
+    amount_sol = int(amount_to_sell * 1e9)
     route = get_route(str(SOL_MINT), str(USDC_MINT), amount_sol)
     if route:
         tx_id, in_amount, out_amount = send_trade(route, price)
