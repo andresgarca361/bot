@@ -334,7 +334,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
     # Removed placeholders
     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
     spread_condition = bid_ask_spread < 0.005
-    momentum_condition = momentum > 0.8
+    momentum_condition = momentum > 0.4
     vwap_condition = price < vwap * (1 - 0.003)
     signal = (rsi < 35 and macd_line > signal_line and 
               price < vwap * (1 - 0.005) and price < lower_bb * 1.01 and 
@@ -589,7 +589,7 @@ def main():
                     execute_sell(state['position'], price)
             else:
                 sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
-                hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi < 85)
+                hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi < 80)
                 for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
                     if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
                         min_profit = 0.02 if portfolio_value < 100 else 1
