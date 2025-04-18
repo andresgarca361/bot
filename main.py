@@ -336,7 +336,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
     spread_condition = bid_ask_spread < 0.005
     momentum_condition = momentum > 0.8
     vwap_condition = price < vwap * (1 - 0.003)
-    signal = (rsi < 30 and macd_line > signal_line and 
+    signal = (rsi < 35 and macd_line > signal_line and 
               price < vwap * (1 - 0.005) and price < lower_bb * 1.01 and 
               momentum_condition and vwap_condition and spread_condition)
     log(f"Buy signal check: {'True' if signal else 'False'} (RSI={rsi:.2f}, MACD={macd_line:.4f}>{signal_line:.4f}, Price=${price:.2f}, VWAP=${vwap:.2f})")
