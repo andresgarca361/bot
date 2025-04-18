@@ -318,7 +318,7 @@ def adjust_triggers(atr, avg_atr, rsi):
         BASE_BUY_TRIGGER = min(2.5, BASE_BUY_TRIGGER + 0.7)
         BASE_SELL_TRIGGER = min(4.0, BASE_SELL_TRIGGER + 0.7)
         log(f"High ATR, triggers: buy={BASE_BUY_TRIGGER}%, sell={BASE_SELL_TRIGGER}%")
-    if rsi is not None and (rsi < 25 or rsi > 85):
+    if rsi is not None and (rsi < 25 or rsi > 68):
         BASE_BUY_TRIGGER = max(1.5, BASE_BUY_TRIGGER - 0.5)
         BASE_SELL_TRIGGER = max(2.5, BASE_SELL_TRIGGER - 0.5)
         log(f"Extreme RSI, triggers: buy={BASE_BUY_TRIGGER}%, sell={BASE_SELL_TRIGGER}%")
@@ -540,7 +540,7 @@ def main():
         global TRADE_INTERVAL
         if atr is not None and avg_atr is not None and avg_atr > 0:
             TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
-            if atr > 2 * avg_atr or (rsi is not None and (rsi < 30 or rsi > 80)):
+            if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 68)):
                 TRADE_INTERVAL = 5
             elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
                 TRADE_INTERVAL = 45
