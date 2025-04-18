@@ -558,11 +558,11 @@ def main():
             state['peak_portfolio'] = portfolio_value
         drawdown = (state['peak_portfolio'] - portfolio_value) / state['peak_portfolio'] * 100 if state['peak_portfolio'] > 0 else 0
         log(f"Portfolio: ${portfolio_value:.2f}, Drawdown: {drawdown:.2f}%")
-        if drawdown > 7:
+        if drawdown > 10:
             state['pause_until'] = current_time + 36 * 3600
             log("Drawdown >7%, pausing for 36 hours")
             continue
-        elif drawdown > 5:
+        elif drawdown > 7:
             state['pause_until'] = current_time + 48 * 3600
             log("Drawdown >5%, pausing for 48 hours")
             continue
@@ -589,7 +589,7 @@ def main():
                     execute_sell(state['position'], price)
             else:
                 sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
-                hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi < 80)
+                hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi < 68)
                 for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
                     if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
                         min_profit = 0.02 if portfolio_value < 100 else 1
