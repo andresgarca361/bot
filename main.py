@@ -331,15 +331,26 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
     if fee > 0.0025:
         log(f"Fees too high ({fee*100:.2f}%), skipping buy")
         return False
-    # Removed placeholders
+    # Bid-ask spread check
     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
     spread_condition = bid_ask_spread < 0.005
-    momentum_condition = momentum > 0.4
-    vwap_condition = price < vwap * (1 - 0.003)
-    signal = (rsi < 35 and macd_line > signal_line and 
-              price < vwap * (1 - 0.005) and price < lower_bb * 1.01 and 
-              momentum_condition and vwap_condition and spread_condition)
-    log(f"Buy signal check: {'True' if signal else 'False'} (RSI={rsi:.2f}, MACD={macd_line:.4f}>{signal_line:.4f}, Price=${price:.2f}, VWAP=${vwap:.2f})")
+    if not spread_condition:
+        log(f"Bid-ask spread too high ({bid_ask_spread*100:.2f}%), skipping buy")
+        return False
+    # Core requirements
+    if rsi >= 35 or macd_line <= signal_line:
+        log(f"Core conditions failed: RSI={rsi:.2f}, MACD={macd_line:.4f}<={signal_line:.4f}")
+        return False
+    # Weighted scoring for additional indicators
+    momentum_weight = 0.4
+    vwap_weight = 0.3
+    bb_weight = 0.3
+    momentum_score = 1 if momentum > 0.4 else 0
+    vwap_score = 1 if price < vwap * 0.995 else 0
+    bb_score = 1 if price < lower_bb * 1.01 else 0
+    total_score = (momentum_weight * momentum_score) + (vwap_weight * vwap_score) + (bb_weight * bb_score)
+    signal = total_score >= 0.6  # At least 2/3 conditions met
+    log(f"Buy signal check: {'True' if signal else 'False'} (RSI={rsi:.2f}, MACD={macd_line:.4f}>{signal_line:.4f}, Score={total_score:.2f})")
     return signal
 
 def calculate_position_size(portfolio_value, atr, avg_atr):
@@ -584,12 +595,15 @@ def main():
                 execute_sell(state['position'], price)
             elif price >= state['entry_price'] * 1.035:
                 state['highest_price'] = max(state['highest_price'], price)
-                if price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
+                if rsi is not None and rsi > 68:  # Direct RSI sell condition
+                    log("RSI overbought, selling position")
+                    execute_sell(state['position'], price)
+                elif price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
                     log("Hit trailing stop, selling position")
                     execute_sell(state['position'], price)
             else:
                 sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
-                hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi < 68)
+                hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 68)
                 for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
                     if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
                         min_profit = 0.02 if portfolio_value < 100 else 1
