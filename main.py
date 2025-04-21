@@ -153,6 +153,8 @@ def initialize_price_history():
         log(f"Failed to save price history: {e}")
 
 # Helper Functions
+@sleep_and_retry
+@limits(calls=90, period=60)
 def fetch_current_price():
     log("Fetching USDC/SOL price...")
     current_time = time.time()
@@ -385,7 +387,8 @@ def calculate_position_size(portfolio_value, atr, avg_atr):
         return 0
     log(f"Position size: {size_sol:.4f} SOL (~${size_usd:.2f})")
     return size_sol
-
+@sleep_and_retry
+@limits(calls=90, period=60)
 def get_route(from_mint, to_mint, amount):
     log(f"Fetching swap route: {from_mint} -> {to_mint}, amount={amount}")
     url = f"https://quote-api.jup.ag/v6/quote?inputMint={from_mint}&outputMint={to_mint}&amount={int(amount)}&slippageBps={int(SLIPPAGE * 10000)}"
@@ -451,6 +454,7 @@ def execute_buy(position_size):
             state['highest_price'] = price
             state['total_trades'] += 1
             log(f"✅ Bought {sol_bought:.4f} SOL @ ${price:.2f}")
+            save_state()
             set_sell_targets(sol_bought, price)
 
 def set_sell_targets(position_size, entry_price):
@@ -504,6 +508,7 @@ def execute_sell(amount, price):
             if len(state['recent_trades']) > 10:
                 state['recent_trades'].pop(0)
             log(f"✅ Sold {sol_sold:.4f} SOL @ ${price:.2f}, Profit: ${profit:.2f}")
+            save_state()
             if state['position'] <= 0:
                 state['position'] = 0
                 state['sell_targets'] = []
@@ -520,6 +525,20 @@ def log_performance(portfolio_value):
         log(f"Stats: Trades={state['total_trades']}, WinRate={win_rate:.2f}%, Profit=${state['total_profit']:.2f}, Drawdown={drawdown:.2f}%")
     except Exception as e:
         log(f"Failed to log performance: {e}")
+def save_state():
+    try:
+        with open('state.json', 'w') as f:
+            json.dump(state, f)
+    except Exception as e:
+        log(f"Failed to save state: {e}")
+
+def load_state():
+    try:
+        if os.path.exists('state.json'):
+            with open('state.json', 'r') as f:
+                state.update(json.load(f))
+    except Exception as e:
+        log(f"Failed to load state: {e}")
 
 def main():
     log("Entering main loop...")
@@ -671,12 +690,11 @@ def http_server():
 if __name__ == "__main__":
     log("Bot initializing...")
     try:
-        # Start TCP health check thread
         health_thread = threading.Thread(target=tcp_health_check, daemon=True)
         health_thread.start()
-        # Start HTTP server thread for pings
         http_thread = threading.Thread(target=http_server, daemon=True)
         http_thread.start()
+        load_state()  # Load state
         initialize_price_history()
         with open('stats.csv', 'w') as f:
             f.write("timestamp,portfolio_value,total_trades,wins,losses,total_profit,win_rate,profit_factor,drawdown\n")
@@ -692,6 +710,7 @@ if __name__ == "__main__":
         log("Bot stopped by user")
         portfolio_value = get_portfolio_value(state['price_history'][-1] if state['price_history'] else 0)
         log_performance(portfolio_value)
+        save_state()  # Save state on shutdown
         log(f"Final Stats: Total Return: {state['total_profit'] / portfolio_value * 100:.2f}%, "
             f"Win Rate: {state['wins'] / state['total_trades'] * 100 if state['total_trades'] > 0 else 0:.2f}%, "
             f"Adverse Months: Not Calculated")
