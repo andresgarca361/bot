@@ -80,9 +80,9 @@ log(f"Connected to RPC: {client._provider.endpoint_uri}")
 
 # State
 state = {
-    'position': 0.0,  # SOL amount
+    'position': 0.0,
     'entry_price': 0.0,
-    'sell_targets': [],  # List of (amount, target_price)
+    'sell_targets': [],
     'highest_price': 0.0,
     'peak_portfolio': 0.0,
     'pause_until': 0,
@@ -95,8 +95,9 @@ state = {
     'losses': 0,
     'total_profit': 0.0,
     'last_fee_update': 0,
-    'cached_fee': 0.002,  # Default fee estimate
-    'recent_trades': [],  # For win streak tracking
+    'cached_fee': 0.002,
+    'recent_trades': [],
+    'last_price': None,  # Add this line
 }
 
 # Initialize Price History
@@ -154,6 +155,12 @@ def initialize_price_history():
 # Helper Functions
 def fetch_current_price():
     log("Fetching USDC/SOL price...")
+    current_time = time.time()
+    # Reuse cached price if fetched within the last 5 seconds
+    if 'last_price' in state and current_time - state['last_fetch_time'] < 5:
+        log(f"Using cached price: ${state['last_price']:.2f}")
+        return state['last_price']
+        
     url = f"https://quote-api.jup.ag/v6/quote?inputMint={SOL_MINT}&outputMint={USDC_MINT}&amount=1000000000&slippageBps=0"
     try:
         response = requests.get(url, timeout=5)
@@ -161,6 +168,7 @@ def fetch_current_price():
             data = response.json()
             out_amount = int(data['outAmount'])
             price = out_amount / 1e6  # USDC per SOL
+            state['last_price'] = price  # Cache the price
             log(f"Price fetched: ${price:.2f}")
 
             # Update price history file
@@ -481,7 +489,9 @@ def execute_sell(amount, price):
         if tx_id:
             sol_sold = in_amount / 1e9
             usdc_received = out_amount / 1e6
-            profit = usdc_received - sol_sold * state['entry_price']
+            fee = get_fee_estimate()
+            fee_amount = usdc_received * fee  # Fee on the received amount
+            profit = (usdc_received - fee_amount) - (sol_sold * state['entry_price'])  # Adjust for fees
             state['position'] -= sol_sold
             state['total_trades'] += 1
             if profit > 0:
