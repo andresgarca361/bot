@@ -521,7 +521,6 @@ def log_performance(portfolio_value):
     except Exception as e:
         log(f"Failed to log performance: {e}")
 
-# Main Loop
 def main():
     log("Entering main loop...")
     last_stats_time = time.time()
@@ -599,13 +598,22 @@ def main():
                     execute_buy(position_size)
 
         # Sell logic
+        total_sol_balance = get_sol_balance()  # Fetch total SOL balance
+        if total_sol_balance > MIN_SOL_THRESHOLD and price:  # Check if we can sell
+            if rsi is not None and rsi > 66:  # Overbought condition
+                amount_to_sell = min(total_sol_balance - MIN_SOL_THRESHOLD, total_sol_balance * 0.1)  # Sell up to 10% of balance
+                if amount_to_sell > 0:
+                    log("Selling SOL from wallet balance due to overbought condition")
+                    if state['position'] == 0:  # No prior buy
+                        state['entry_price'] = price  # Set entry price for profit tracking
+                    execute_sell(amount_to_sell, price)
         elif state['position'] > 0 and price:
             if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
                 log("Hit stop-loss, selling position")
                 execute_sell(state['position'], price)
             elif price >= state['entry_price'] * 1.035:
                 state['highest_price'] = max(state['highest_price'], price)
-                if rsi is not None and rsi > 66:  # Direct RSI sell condition
+                if rsi is not None and rsi > 66:
                     log("RSI overbought, selling position")
                     execute_sell(state['position'], price)
                 elif price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
