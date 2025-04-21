@@ -338,7 +338,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
         log(f"Bid-ask spread too high ({bid_ask_spread*100:.2f}%), skipping buy")
         return False
     # Core requirements
-    if rsi >= 35 or macd_line <= signal_line:
+    if rsi >= 38 or macd_line <= signal_line:
         log(f"Core conditions failed: RSI={rsi:.2f}, MACD={macd_line:.4f}<={signal_line:.4f}")
         return False
     # Weighted scoring for additional indicators
@@ -449,15 +449,15 @@ def set_sell_targets(position_size, entry_price):
     log(f"Setting sell targets for {position_size:.4f} SOL")
     if position_size < 1:
         state['sell_targets'] = [
-            (position_size * 0.5, entry_price * 1.025),
-            (position_size * 0.3, entry_price * 1.04),
-            (position_size * 0.2, entry_price * 1.06)
+            (position_size * 0.5, entry_price * 1.02),  # 50% at 2% above entry
+            (position_size * 0.3, entry_price * 1.05),  # 30% at 5% above entry
+            (position_size * 0.2, entry_price * 1.08)   # 20% at 8% above entry
         ]
     else:
         state['sell_targets'] = [
-            (position_size * 0.4, entry_price * 1.025),
-            (position_size * 0.4, entry_price * 1.04),
-            (position_size * 0.2, entry_price * 1.06)
+            (position_size * 0.4, entry_price * 1.02),  # 40% at 2% above entry
+            (position_size * 0.4, entry_price * 1.05),  # 40% at 5% above entry
+            (position_size * 0.2, entry_price * 1.08)   # 20% at 8% above entry
         ]
     log(f"Sell targets: {state['sell_targets']}")
 
@@ -552,7 +552,7 @@ def main():
         if atr is not None and avg_atr is not None and avg_atr > 0:
             TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
             if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 68)):
-                TRADE_INTERVAL = 5
+                TRADE_INTERVAL = 4
             elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
                 TRADE_INTERVAL = 45
             log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s")
@@ -595,7 +595,7 @@ def main():
                 execute_sell(state['position'], price)
             elif price >= state['entry_price'] * 1.035:
                 state['highest_price'] = max(state['highest_price'], price)
-                if rsi is not None and rsi > 68:  # Direct RSI sell condition
+                if rsi is not None and rsi > 66:  # Direct RSI sell condition
                     log("RSI overbought, selling position")
                     execute_sell(state['position'], price)
                 elif price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
