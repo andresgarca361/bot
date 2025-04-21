@@ -318,7 +318,7 @@ def adjust_triggers(atr, avg_atr, rsi):
         BASE_BUY_TRIGGER = min(2.5, BASE_BUY_TRIGGER + 0.7)
         BASE_SELL_TRIGGER = min(4.0, BASE_SELL_TRIGGER + 0.7)
         log(f"High ATR, triggers: buy={BASE_BUY_TRIGGER}%, sell={BASE_SELL_TRIGGER}%")
-    if rsi is not None and (rsi < 25 or rsi > 68):
+    if rsi is not None and (rsi < 25 or rsi > 66):
         BASE_BUY_TRIGGER = max(1.5, BASE_BUY_TRIGGER - 0.5)
         BASE_SELL_TRIGGER = max(2.5, BASE_SELL_TRIGGER - 0.5)
         log(f"Extreme RSI, triggers: buy={BASE_BUY_TRIGGER}%, sell={BASE_SELL_TRIGGER}%")
@@ -328,7 +328,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
         log("Missing indicators, skipping buy")
         return False
     fee = get_fee_estimate()
-    if fee > 0.0025:
+    if fee > 0.0035:
         log(f"Fees too high ({fee*100:.2f}%), skipping buy")
         return False
     # Bid-ask spread check
@@ -551,7 +551,7 @@ def main():
         global TRADE_INTERVAL
         if atr is not None and avg_atr is not None and avg_atr > 0:
             TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
-            if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 68)):
+            if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 66)):
                 TRADE_INTERVAL = 4
             elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
                 TRADE_INTERVAL = 45
@@ -570,12 +570,12 @@ def main():
         drawdown = (state['peak_portfolio'] - portfolio_value) / state['peak_portfolio'] * 100 if state['peak_portfolio'] > 0 else 0
         log(f"Portfolio: ${portfolio_value:.2f}, Drawdown: {drawdown:.2f}%")
         if drawdown > 10:
-            state['pause_until'] = current_time + 36 * 3600
-            log("Drawdown >7%, pausing for 36 hours")
+            state['pause_until'] = current_time + 48 * 3600
+            log("Drawdown >10%, pausing for 48 hours")
             continue
         elif drawdown > 7:
-            state['pause_until'] = current_time + 48 * 3600
-            log("Drawdown >5%, pausing for 48 hours")
+            state['pause_until'] = current_time + 36 * 3600
+            log("Drawdown >7%, pausing for 36 hours")
             continue
 
         # Adjust triggers
@@ -603,7 +603,7 @@ def main():
                     execute_sell(state['position'], price)
             else:
                 sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
-                hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 68)
+                hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 66)
                 for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
                     if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
                         min_profit = 0.02 if portfolio_value < 100 else 1
