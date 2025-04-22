@@ -97,7 +97,10 @@ state = {
     'last_fee_update': 0,
     'cached_fee': 0.002,
     'recent_trades': [],
-    'last_price': None,  # Add this line
+    'last_price': None,
+    'last_sol_balance': 0.0,  # Add this
+    'last_usdc_balance': 0.0,  # Add this
+    'last_balance_update': 0,  # Add this
 }
 
 # Initialize Price History
