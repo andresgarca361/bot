@@ -391,7 +391,7 @@ def calculate_position_size(portfolio_value, atr, avg_atr):
 @limits(calls=90, period=60)
 def get_route(from_mint, to_mint, amount):
     log(f"Fetching swap route: {from_mint} -> {to_mint}, amount={amount}")
-    url = f"https://quote-api.jup.ag/v6/quote?inputMint={from_mint}&outputMint={to_mint}&amount={int(amount)}&slippageBps={int(SLIPPAGE * 10000)}&swapMode=ExactOut&asLegacyTransaction=True"
+    url = f"https://quote-api.jup.ag/v6/quote?inputMint={from_mint}&outputMint={to_mint}&amount={int(amount)}&slippageBps={int(SLIPPAGE * 10000)}&swapMode=ExactOut&asLegacyTransaction=True&onlyDirectRoutes=True"
     try:
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
