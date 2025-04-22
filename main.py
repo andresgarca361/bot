@@ -394,7 +394,7 @@ def calculate_position_size(portfolio_value, atr, avg_atr):
 @limits(calls=90, period=60)
 def get_route(from_mint, to_mint, amount):
     log(f"Fetching swap route: {from_mint} -> {to_mint}, amount={amount}")
-    url = f"https://quote-api.jup.ag/v6/quote?inputMint={from_mint}&outputMint={to_mint}&amount={int(amount)}&slippageBps={int(SLIPPAGE * 10000)}&swapMode=ExactOut&asLegacyTransaction=True&onlyDirectRoutes=True"
+    url = f"https://quote-api.jup.ag/v6/quote?inputMint={from_mint}&outputMint={to_mint}&amount={int(amount)}&slippageBps={int(SLIPPAGE * 10000)}&swapMode=ExactIn"
     try:
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
@@ -482,25 +482,23 @@ def execute_sell(amount, price):
     if not price:
         log("No price, aborting sell")
         return
-    # Check if selling the amount would bring balance below MIN_SOL_THRESHOLD
     remaining_sol = total_sol_balance - amount
     if remaining_sol < MIN_SOL_THRESHOLD:
-        amount_to_sell = max(0, total_sol_balance - MIN_SOL_THRESHOLD)  # Adjust to leave at least 0.01 SOL
+        amount_to_sell = max(0, total_sol_balance - MIN_SOL_THRESHOLD)
         log(f"Adjusted sell to {amount_to_sell:.4f} SOL to maintain minimum balance of {MIN_SOL_THRESHOLD:.4f} SOL")
     else:
         amount_to_sell = amount
-    # Calculate USDC output for ExactOut mode (USDC has 6 decimals)
-    usdc_amount = int(amount_to_sell * price * 1e6)  # Convert to USDC lamports
-    log(f"Expected USDC output: {usdc_amount} lamports (~${usdc_amount / 1e6:.2f})")
-    route = get_route(str(SOL_MINT), str(USDC_MINT), usdc_amount)
+    amount_sol = int(amount_to_sell * 1e9)  # Convert SOL to lamports
+    log(f"Selling {amount_sol} SOL lamports (~${amount_to_sell * price:.2f})")
+    route = get_route(str(SOL_MINT), str(USDC_MINT), amount_sol)
     if route:
         tx_id, in_amount, out_amount = send_trade(route, price)
         if tx_id:
             sol_sold = in_amount / 1e9
             usdc_received = out_amount / 1e6
             fee = get_fee_estimate()
-            fee_amount = usdc_received * fee  # Fee on the received amount
-            profit = (usdc_received - fee_amount) - (sol_sold * state['entry_price'])  # Adjust for fees
+            fee_amount = usdc_received * fee
+            profit = (usdc_received - fee_amount) - (sol_sold * state['entry_price'])
             state['position'] -= sol_sold
             state['total_trades'] += 1
             if profit > 0:
@@ -518,7 +516,6 @@ def execute_sell(amount, price):
                 state['position'] = 0
                 state['sell_targets'] = []
                 state['highest_price'] = 0
-
 def log_performance(portfolio_value):
     log("Logging performance...")
     try:
