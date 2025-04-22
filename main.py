@@ -486,8 +486,10 @@ def execute_sell(amount, price):
         log(f"Adjusted sell to {amount_to_sell:.4f} SOL to maintain minimum balance of {MIN_SOL_THRESHOLD:.4f} SOL")
     else:
         amount_to_sell = amount
-    amount_sol = int(amount_to_sell * 1e9)
-    route = get_route(str(SOL_MINT), str(USDC_MINT), amount_sol)
+    # Calculate USDC output for ExactOut mode (USDC has 6 decimals)
+    usdc_amount = int(amount_to_sell * price * 1e6)  # Convert to USDC lamports
+    log(f"Expected USDC output: {usdc_amount} lamports (~${usdc_amount / 1e6:.2f})")
+    route = get_route(str(SOL_MINT), str(USDC_MINT), usdc_amount)
     if route:
         tx_id, in_amount, out_amount = send_trade(route, price)
         if tx_id:
