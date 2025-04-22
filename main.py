@@ -67,7 +67,7 @@ BASE_BUY_TRIGGER = 2.0  # %, adjusted dynamically
 BASE_SELL_TRIGGER = 3.0  # %, adjusted dynamically
 STOP_LOSS_DROP = 5.0  # %
 TRAILING_STOP = 2.5  # %, activated at 3.5% profit
-SLIPPAGE = 0.005 # 0.5%
+SLIPPAGE = 0.01
 MIN_TRADE_USD = 1.0
 MAX_POSITION_SOL = 3.0
 MAX_DRAWDOWN = 15.0  # %
@@ -446,7 +446,8 @@ def execute_buy(position_size):
     if not price:
         log("No price, aborting buy")
         return
-    input_amount_usdc = int(position_size * price * (1 + SLIPPAGE) * 1e6)
+    input_amount_usdc = int(position_size * price * 1e6)  # Convert to USDC lamports (ExactIn)
+    log(f"Buying with {input_amount_usdc} USDC lamports (~${input_amount_usdc / 1e6:.2f})")
     route = get_route(str(USDC_MINT), str(SOL_MINT), input_amount_usdc)
     if route:
         tx_id, in_amount, out_amount = send_trade(route, price)
