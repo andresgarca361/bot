@@ -399,17 +399,17 @@ def get_route(from_mint, to_mint, amount):
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            if not data['data']:
-                log(f"No routes available. Response: {data}")  # Add this line to log the full response
-            else:
+            log(f"API response: {data}")
+            if isinstance(data, dict) and 'data' in data and data['data']:
                 log("Route found")
                 return data['data'][0]
-        else:
-            log(f"Route fetch failed: Status {response.status_code}, Response: {response.text}")
+            log("No routes available")
+            return None
+        log(f"Route fetch failed: Status {response.status_code}, Response: {response.text}")
+        return None
     except Exception as e:
-        log(f"Route fetch error: {e}")
-    return None
-
+        log(f"Route fetch error: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
+        return None
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5))
 def send_trade(route, current_price):
     log("Sending trade...")
