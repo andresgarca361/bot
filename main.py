@@ -399,13 +399,13 @@ def get_route(from_mint, to_mint, amount):
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            route = data['data'][0] if 'data' in data and data['data'] else None
-            if route:
+            if not data['data']:
+                log(f"No routes available. Response: {data}")  # Add this line to log the full response
+            else:
                 log("Route found")
-                return route
-            log("No routes available")
+                return data['data'][0]
         else:
-            log(f"Route fetch failed: Status {response.status_code}")
+            log(f"Route fetch failed: Status {response.status_code}, Response: {response.text}")
     except Exception as e:
         log(f"Route fetch error: {e}")
     return None
