@@ -400,9 +400,16 @@ def get_route(from_mint, to_mint, amount):
         if response.status_code == 200:
             data = response.json()
             log(f"API response: {data}")
-            if isinstance(data, dict) and 'data' in data and data['data']:
+            # Check if response has 'routePlan' directly or nested under 'data'
+            route = None
+            if isinstance(data, dict):
+                if 'routePlan' in data:
+                    route = data  # Route is directly in the response
+                elif 'data' in data and data['data']:
+                    route = data['data'][0]  # Route is nested under 'data'
+            if route:
                 log("Route found")
-                return data['data'][0]
+                return route
             log("No routes available")
             return None
         log(f"Route fetch failed: Status {response.status_code}, Response: {response.text}")
