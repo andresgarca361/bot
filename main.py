@@ -10,14 +10,13 @@ from solana.rpc.api import Client
 from solana.rpc.types import TxOpts, TokenAccountOpts
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
-from solders.transaction import Transaction
+from solders.transaction import VersionedTransaction  # Updated line
 from base64 import b64decode
 from tenacity import retry, stop_after_attempt, wait_exponential
 from ratelimit import limits, sleep_and_retry
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
 # Logging setup
 logger = logging.getLogger('TradingBot')
 logger.setLevel(logging.INFO)
@@ -443,7 +442,12 @@ def send_trade(route, current_price):
             log(f"Failed to decode transaction: {e}, Raw data: {tx_raw}")
             return None, 0, 0
         try:
-            result = client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=False))
+            # Deserialize the transaction using VersionedTransaction
+            tx = VersionedTransaction.from_bytes(tx_data)
+            # Sign the transaction with your keypair
+            tx.sign([keypair])
+            # Send the signed transaction
+            result = client.send_transaction(tx, opts=TxOpts(skip_preflight=False))
             tx_id = result.value
             log(f"Trade sent: tx_id={tx_id}")
             time.sleep(5)  # Wait for transaction confirmation
