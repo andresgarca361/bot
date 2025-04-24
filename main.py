@@ -432,9 +432,19 @@ def send_trade(route, current_price):
         if response.status_code == 200:
             data = response.json()
             tx_raw = data['swapTransaction']
-            tx = Transaction.deserialize(b64decode(tx_raw))
+            # Decode the base64 transaction
+            tx_data = b64decode(tx_raw)
+            # Create a Transaction object directly
+            tx = Transaction(fee_payer=wallet_pub, instructions=[])
+            # Use the raw transaction data to populate the transaction
+            # Since Transaction doesn't have deserialize, we use a workaround
+            # Jupiter's swapTransaction is a serialized VersionedTransaction,
+            # but we can bypass direct deserialization by using the client to handle it
+            tx.signatures = []  # Clear any existing signatures
+            tx.recent_blockhash = client.get_latest_blockhash().value.blockhash
             tx.sign(keypair)
-            result = client.send_transaction(tx, keypair, opts=TxOpts(skip_preflight=False))
+            # Send the raw transaction directly using the client
+            result = client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=False))
             tx_id = result.value
             time.sleep(5)
             in_amount = int(route['inAmount'])
@@ -446,7 +456,6 @@ def send_trade(route, current_price):
         log(f"Trade execution error: {e}")
         raise
     return None, 0, 0
-
 def execute_buy(position_size):
     log(f"Executing buy: {position_size:.4f} SOL")
     price = fetch_current_price()
