@@ -429,33 +429,33 @@ def send_trade(route, current_price):
     }
     try:
         response = requests.post(url, json=payload, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            tx_raw = data['swapTransaction']
-            # Decode the base64 transaction
+        if response.status_code != 200:
+            log(f"Trade failed: Status {response.status_code}, Response: {response.text}")
+            return None, 0, 0
+        data = response.json()
+        if 'swapTransaction' not in data:
+            log(f"Missing swapTransaction in response: {data}")
+            return None, 0, 0
+        tx_raw = data['swapTransaction']
+        try:
             tx_data = b64decode(tx_raw)
-            # Create a Transaction object directly
-            tx = Transaction(fee_payer=wallet_pub, instructions=[])
-            # Use the raw transaction data to populate the transaction
-            # Since Transaction doesn't have deserialize, we use a workaround
-            # Jupiter's swapTransaction is a serialized VersionedTransaction,
-            # but we can bypass direct deserialization by using the client to handle it
-            tx.signatures = []  # Clear any existing signatures
-            tx.recent_blockhash = client.get_latest_blockhash().value.blockhash
-            tx.sign(keypair)
-            # Send the raw transaction directly using the client
+        except Exception as e:
+            log(f"Failed to decode transaction: {e}, Raw data: {tx_raw}")
+            return None, 0, 0
+        try:
             result = client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=False))
             tx_id = result.value
-            time.sleep(5)
+            log(f"Trade sent: tx_id={tx_id}")
+            time.sleep(5)  # Wait for transaction confirmation
             in_amount = int(route['inAmount'])
             out_amount = int(route['outAmount'])
-            log(f"Trade sent: tx_id={tx_id}")
             return tx_id, in_amount, out_amount
-        log(f"Trade failed: Status {response.status_code}")
+        except Exception as e:
+            log(f"Failed to send transaction: {e}")
+            return None, 0, 0
     except Exception as e:
-        log(f"Trade execution error: {e}")
-        raise
-    return None, 0, 0
+        log(f"Trade execution error: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
+        return None, 0, 0
 def execute_buy(position_size):
     log(f"Executing buy: {position_size:.4f} SOL")
     price = fetch_current_price()
