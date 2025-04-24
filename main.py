@@ -444,12 +444,15 @@ def send_trade(route, current_price):
         try:
             # Deserialize the transaction
             tx = VersionedTransaction.from_bytes(tx_data)
-            # Extract the message to sign
+            # Extract and serialize the message correctly
             message = tx.message
+            message_bytes = message.serialize()  # Use serialize() for correct format
             # Sign the message with your keypair
-            signature = keypair.sign_message(bytes(message))
-            # Add the signature to the transaction
-            tx.signatures = [signature]
+            signature = keypair.sign_message(message_bytes)
+            # Set the signature in the correct position
+            # Jupiter's transaction expects the first signature to be the user's
+            signatures = [signature] + [b'\x00' * 64] * (len(tx.signatures) - 1) if len(tx.signatures) > 1 else [signature]
+            tx.signatures = signatures
             # Serialize the signed transaction
             signed_tx_data = bytes(tx)
             # Send the signed transaction
