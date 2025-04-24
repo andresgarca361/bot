@@ -442,12 +442,18 @@ def send_trade(route, current_price):
             log(f"Failed to decode transaction: {e}, Raw data: {tx_raw}")
             return None, 0, 0
         try:
-            # Deserialize the transaction using VersionedTransaction
+            # Deserialize the transaction
             tx = VersionedTransaction.from_bytes(tx_data)
-            # Sign the transaction with your keypair
-            tx.sign([keypair])
+            # Extract the message to sign
+            message = tx.message
+            # Sign the message with your keypair
+            signature = keypair.sign_message(bytes(message))
+            # Add the signature to the transaction
+            tx.signatures = [signature]
+            # Serialize the signed transaction
+            signed_tx_data = bytes(tx)
             # Send the signed transaction
-            result = client.send_transaction(tx, opts=TxOpts(skip_preflight=False))
+            result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
             tx_id = result.value
             log(f"Trade sent: tx_id={tx_id}")
             time.sleep(5)  # Wait for transaction confirmation
