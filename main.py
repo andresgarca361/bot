@@ -10,13 +10,14 @@ from solana.rpc.api import Client
 from solana.rpc.types import TxOpts, TokenAccountOpts
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
-from solders.transaction import VersionedTransaction  # Updated line
+from solders.transaction import VersionedTransaction
 from base64 import b64decode
 from tenacity import retry, stop_after_attempt, wait_exponential
 from ratelimit import limits, sleep_and_retry
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
 # Logging setup
 logger = logging.getLogger('TradingBot')
 logger.setLevel(logging.INFO)
@@ -97,9 +98,9 @@ state = {
     'cached_fee': 0.002,
     'recent_trades': [],
     'last_price': None,
-    'last_sol_balance': 0.0,  # Add this
-    'last_usdc_balance': 0.0,  # Add this
-    'last_balance_update': 0,  # Add this
+    'last_sol_balance': 0.0,
+    'last_usdc_balance': 0.0,
+    'last_balance_update': 0,
 }
 
 # Initialize Price History
@@ -389,6 +390,7 @@ def calculate_position_size(portfolio_value, atr, avg_atr):
         return 0
     log(f"Position size: {size_sol:.4f} SOL (~${size_usd:.2f})")
     return size_sol
+
 @sleep_and_retry
 @limits(calls=90, period=60)
 def get_route(from_mint, to_mint, amount):
@@ -416,6 +418,7 @@ def get_route(from_mint, to_mint, amount):
     except Exception as e:
         log(f"Route fetch error: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
         return None
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5))
 def send_trade(route, current_price):
     log("Sending trade...")
@@ -444,8 +447,12 @@ def send_trade(route, current_price):
         try:
             # Deserialize the transaction
             tx = VersionedTransaction.from_bytes(tx_data)
-            # Sign the transaction with your keypair
-            tx.sign([keypair])  # This handles serialization and signing internally
+            # Extract the message and convert to bytes
+            message_bytes = bytes(tx.message)
+            # Sign the message with your keypair
+            signature = keypair.sign_message(message_bytes)
+            # Set the signature
+            tx.signatures = [signature]
             # Serialize the signed transaction
             signed_tx_data = bytes(tx)
             # Send the signed transaction
@@ -462,6 +469,7 @@ def send_trade(route, current_price):
     except Exception as e:
         log(f"Trade execution error: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
         return None, 0, 0
+
 def execute_buy(position_size):
     log(f"Executing buy: {position_size:.4f} SOL")
     price = fetch_current_price()
@@ -539,6 +547,7 @@ def execute_sell(amount, price):
                 state['position'] = 0
                 state['sell_targets'] = []
                 state['highest_price'] = 0
+
 def log_performance(portfolio_value):
     log("Logging performance...")
     try:
@@ -550,6 +559,7 @@ def log_performance(portfolio_value):
         log(f"Stats: Trades={state['total_trades']}, WinRate={win_rate:.2f}%, Profit=${state['total_profit']:.2f}, Drawdown={drawdown:.2f}%")
     except Exception as e:
         log(f"Failed to log performance: {e}")
+
 def save_state():
     try:
         with open('state.json', 'w') as f:
@@ -710,7 +720,6 @@ def http_server():
     server = HTTPServer(('0.0.0.0', 80), SimpleHandler)
     log("HTTP server listening on port 80 for pings...")
     server.serve_forever()
-
 
 if __name__ == "__main__":
     log("Bot initializing...")
