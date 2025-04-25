@@ -445,9 +445,9 @@ def send_trade(route, current_price):
         log(f"API request failed: {e}")
         return None, 0, 0
 
-    # Step 2: Decode the raw transaction (Jupiter uses base58 encoding)
+    # Step 2: Decode the raw transaction (Changed from base58 to base64)
     try:
-        tx_data = base58.b58decode(tx_raw)
+        tx_data = b64decode(tx_raw)  # Modified line: previously base58.b58decode(tx_raw)
     except Exception as e:
         log(f"Failed to decode transaction: {e}, Raw data: {tx_raw}")
         return None, 0, 0
