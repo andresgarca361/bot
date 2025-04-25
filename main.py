@@ -429,6 +429,8 @@ def send_trade(route, current_price):
         "wrapAndUnwrapSol": True,
         "computeUnitPriceMicroLamports": 700
     }
+    
+    # Step 1: Send request to Jupiter API
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code != 200:
@@ -439,27 +441,63 @@ def send_trade(route, current_price):
             log(f"Missing swapTransaction in response: {data}")
             return None, 0, 0
         tx_raw = data['swapTransaction']
-        try:
-            tx_data = b64decode(tx_raw)
-        except Exception as e:
-            log(f"Failed to decode transaction: {e}, Raw data: {tx_raw}")
-            return None, 0, 0
-        try:
-            tx = VersionedTransaction.from_bytes(tx_data)
-            tx.sign([keypair])  # Use the built-in sign method
-            signed_tx_data = bytes(tx)
-            result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
-            tx_id = result.value
-            log(f"Trade sent: tx_id={tx_id}")
-            time.sleep(5)
-            in_amount = int(route['inAmount'])
-            out_amount = int(route['outAmount'])
-            return tx_id, in_amount, out_amount
-        except Exception as e:
-            log(f"Failed to send transaction: {e}")
-            return None, 0, 0
     except Exception as e:
-        log(f"Trade execution error: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
+        log(f"API request failed: {e}")
+        return None, 0, 0
+
+    # Step 2: Decode the raw transaction (Jupiter uses base58 encoding)
+    try:
+        tx_data = base58.b58decode(tx_raw)
+    except Exception as e:
+        log(f"Failed to decode transaction: {e}, Raw data: {tx_raw}")
+        return None, 0, 0
+
+    # Step 3: Parse into VersionedTransaction
+    try:
+        tx = VersionedTransaction.from_bytes(tx_data)
+    except Exception as e:
+        log(f"Failed to parse transaction: {e}")
+        return None, 0, 0
+
+    # Step 4: Serialize message for signing (solders==0.21.0 compatibility)
+    try:
+        message_bytes = tx.message.to_bytes()
+    except Exception as e:
+        log(f"Message serialization failed: {e}")
+        return None, 0, 0
+
+    # Step 5: Sign the message
+    try:
+        signature = keypair.sign_message(message_bytes)
+    except Exception as e:
+        log(f"Signing failed: {e}")
+        return None, 0, 0
+
+    # Step 6: Attach signature to transaction
+    try:
+        tx.signatures = [signature]
+    except Exception as e:
+        log(f"Failed to set signature: {e}")
+        return None, 0, 0
+
+    # Step 7: Serialize signed transaction
+    try:
+        signed_tx_data = bytes(tx)
+    except Exception as e:
+        log(f"Transaction serialization failed: {e}")
+        return None, 0, 0
+
+    # Step 8: Send transaction
+    try:
+        result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
+        tx_id = result.value
+        log(f"Trade sent: tx_id={tx_id}")
+        time.sleep(5)
+        in_amount = int(route['inAmount'])
+        out_amount = int(route['outAmount'])
+        return tx_id, in_amount, out_amount
+    except Exception as e:
+        log(f"Transaction submission failed: {e}")
         return None, 0, 0
 
 def execute_buy(position_size):
