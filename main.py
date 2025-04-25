@@ -445,21 +445,13 @@ def send_trade(route, current_price):
             log(f"Failed to decode transaction: {e}, Raw data: {tx_raw}")
             return None, 0, 0
         try:
-            # Deserialize the transaction
             tx = VersionedTransaction.from_bytes(tx_data)
-            # Extract the message and serialize it correctly
-            message_bytes = tx.message.serialize()
-            # Sign the message with your keypair
-            signature = keypair.sign_message(message_bytes)
-            # Set the signature (Jupiter expects exactly one signature)
-            tx.signatures = [signature]
-            # Serialize the signed transaction
+            tx.sign([keypair])  # Use the built-in sign method
             signed_tx_data = bytes(tx)
-            # Send the signed transaction
             result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
             tx_id = result.value
             log(f"Trade sent: tx_id={tx_id}")
-            time.sleep(5)  # Wait for transaction confirmation
+            time.sleep(5)
             in_amount = int(route['inAmount'])
             out_amount = int(route['outAmount'])
             return tx_id, in_amount, out_amount
