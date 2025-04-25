@@ -17,7 +17,7 @@ from ratelimit import limits, sleep_and_retry
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
+from solders.message import to_bytes_versioned
 # Logging setup
 logger = logging.getLogger('TradingBot')
 logger.setLevel(logging.INFO)
@@ -459,9 +459,9 @@ def send_trade(route, current_price):
         log(f"Failed to parse transaction: {e}")
         return None, 0, 0
 
-    # Step 4: Serialize message for signing (Corrected for solders==0.21.0)
+    # Step 4: Serialize message for signing using to_bytes_versioned
     try:
-        message_bytes = tx.message.serialize()  # Changed from to_bytes() to serialize()
+        message_bytes = to_bytes_versioned(tx.message)  # Correct method for solders==0.21.0
     except Exception as e:
         log(f"Message serialization failed: {e}")
         return None, 0, 0
