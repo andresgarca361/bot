@@ -444,15 +444,8 @@ def send_trade(route, current_price):
         try:
             # Deserialize the transaction
             tx = VersionedTransaction.from_bytes(tx_data)
-            # Extract the message
-            message = tx.message
-            # Serialize the message for signing (compatible with older solders versions)
-            message_bytes = message.to_bytes()  # Use to_bytes() instead of serialize()
-            # Sign the message with your keypair
-            signature = keypair.sign_message(message_bytes)
-            # Set the signature (Jupiter expects the user's signature first)
-            signatures = [signature] + [b'\x00' * 64] * (len(tx.signatures) - 1) if len(tx.signatures) > 1 else [signature]
-            tx.signatures = signatures
+            # Sign the transaction with your keypair
+            tx.sign([keypair])  # This handles serialization and signing internally
             # Serialize the signed transaction
             signed_tx_data = bytes(tx)
             # Send the signed transaction
