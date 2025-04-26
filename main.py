@@ -265,14 +265,21 @@ def calculate_rsi(prices, period=14):
     changes = np.diff(prices)
     gains = np.where(changes > 0, changes, 0)
     losses = np.where(changes < 0, -changes, 0)
-    avg_gain = np.mean(gains[-period:])
-    avg_loss = np.mean(losses[-period:])
-    if avg_loss == 0:
-        return 100
+    # Use EMA for smoother and more accurate RSI
+    avg_gain = gains[-period:].mean()
+    avg_loss = losses[-period:].mean()
+    for i in range(len(prices) - period, len(prices)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    # Prevent division by zero or very small loss
+    if avg_loss < 0.0001:  # Small threshold to avoid RSI dropping to 0 or 1
+        avg_loss = 0.0001
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     log(f"RSI: {rsi:.2f}")
     return rsi
+
+
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
     if len(prices) < slow + signal - 1:
@@ -362,7 +369,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
     vwap_score = 1 if price < vwap * 0.995 else 0
     bb_score = 1 if price < lower_bb * 1.01 else 0
     total_score = (momentum_weight * momentum_score) + (vwap_weight * vwap_score) + (bb_weight * bb_score)
-    signal = total_score >= 0.6  # At least 2/3 conditions met
+    signal = total_score >= 0.5  # Lowered from 0.6 to allow more buys
     log(f"Buy signal check: {'True' if signal else 'False'} (RSI={rsi:.2f}, MACD={macd_line:.4f}>{signal_line:.4f}, Score={total_score:.2f})")
     return signal
 
