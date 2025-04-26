@@ -101,8 +101,9 @@ state = {
     'last_sol_balance': 0.0,
     'last_usdc_balance': 0.0,
     'last_balance_update': 0,
+    'rsi_avg_gain': None,  # Added for incremental EMA
+    'rsi_avg_loss': None,  # Added for incremental EMA
 }
-
 # Initialize Price History
 def initialize_price_history():
     log("Initializing price history...")
@@ -258,25 +259,34 @@ def get_fee_estimate():
     return state['cached_fee']
 
 # Indicator Functions
+# Add to state initialization (line 84)
+
+
+# Update calculate_rsi (line 248)
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
         log("Not enough prices for RSI")
         return None
-    changes = np.diff(prices)  # Length: len(prices) - 1
+    changes = np.diff(prices)
     gains = np.where(changes > 0, changes, 0)
     losses = np.where(changes < 0, -changes, 0)
-    # Use EMA for smoother and more accurate RSI
-    avg_gain = gains[-period:].mean()
-    avg_loss = losses[-period:].mean()
-    # Adjust loop to stay within bounds: gains/losses have length len(prices) - 1
-    start_idx = max(0, len(prices) - period - 1)
-    for i in range(start_idx, len(changes)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    
+    # Initialize EMA if not set
+    if state['rsi_avg_gain'] is None or state['rsi_avg_loss'] is None:
+        state['rsi_avg_gain'] = gains[-period:].mean()
+        state['rsi_avg_loss'] = losses[-period:].mean()
+    
+    # Update EMA incrementally with the latest change
+    latest_gain = gains[-1]
+    latest_loss = losses[-1]
+    state['rsi_avg_gain'] = (state['rsi_avg_gain'] * (period - 1) + latest_gain) / period
+    state['rsi_avg_loss'] = (state['rsi_avg_loss'] * (period - 1) + latest_loss) / period
+    
     # Prevent division by zero or very small loss
-    if avg_loss < 0.0001:  # Small threshold to avoid RSI dropping to 0 or 1
+    avg_loss = state['rsi_avg_loss']
+    if avg_loss < 0.0001:
         avg_loss = 0.0001
-    rs = avg_gain / avg_loss
+    rs = state['rsi_avg_gain'] / avg_loss
     rsi = 100 - (100 / (1 + rs))
     log(f"RSI: {rsi:.2f}")
     return rsi
