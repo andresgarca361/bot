@@ -262,13 +262,15 @@ def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
         log("Not enough prices for RSI")
         return None
-    changes = np.diff(prices)
+    changes = np.diff(prices)  # Length: len(prices) - 1
     gains = np.where(changes > 0, changes, 0)
     losses = np.where(changes < 0, -changes, 0)
     # Use EMA for smoother and more accurate RSI
     avg_gain = gains[-period:].mean()
     avg_loss = losses[-period:].mean()
-    for i in range(len(prices) - period, len(prices)):
+    # Adjust loop to stay within bounds: gains/losses have length len(prices) - 1
+    start_idx = max(0, len(prices) - period - 1)
+    for i in range(start_idx, len(changes)):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
     # Prevent division by zero or very small loss
