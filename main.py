@@ -267,26 +267,21 @@ def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
         log("Not enough prices for RSI")
         return None
-    changes = np.diff(prices)
+    # Use only the last (period + 1) prices to avoid slowdown
+    relevant_prices = prices[-(period + 1):]
+    changes = np.diff(relevant_prices)
     gains = np.where(changes > 0, changes, 0)
     losses = np.where(changes < 0, -changes, 0)
-    
-    # Initialize EMA if not set
-    if state['rsi_avg_gain'] is None or state['rsi_avg_loss'] is None:
-        state['rsi_avg_gain'] = gains[-period:].mean()
-        state['rsi_avg_loss'] = losses[-period:].mean()
-    
-    # Update EMA incrementally with the latest change
-    latest_gain = gains[-1]
-    latest_loss = losses[-1]
-    state['rsi_avg_gain'] = (state['rsi_avg_gain'] * (period - 1) + latest_gain) / period
-    state['rsi_avg_loss'] = (state['rsi_avg_loss'] * (period - 1) + latest_loss) / period
-    
+    # Direct EMA calculation
+    avg_gain = gains.mean()
+    avg_loss = losses.mean()
+    for i in range(1, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
     # Prevent division by zero or very small loss
-    avg_loss = state['rsi_avg_loss']
     if avg_loss < 0.0001:
         avg_loss = 0.0001
-    rs = state['rsi_avg_gain'] / avg_loss
+    rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     log(f"RSI: {rsi:.2f}")
     return rsi
