@@ -79,6 +79,7 @@ client = Client(RPC_URLS[0])
 log(f"Connected to RPC: {client._provider.endpoint_uri}")
 
 # State
+# State (line 84)
 state = {
     'position': 0.0,
     'entry_price': 0.0,
@@ -101,8 +102,6 @@ state = {
     'last_sol_balance': 0.0,
     'last_usdc_balance': 0.0,
     'last_balance_update': 0,
-    'rsi_avg_gain': None,  # Added for incremental EMA
-    'rsi_avg_loss': None,  # Added for incremental EMA
 }
 # Initialize Price History
 def initialize_price_history():
