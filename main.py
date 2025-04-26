@@ -79,6 +79,7 @@ client = Client(RPC_URLS[0])
 log(f"Connected to RPC: {client._provider.endpoint_uri}")
 
 # State (line 84)
+# State (line 84)
 state = {
     'position': 0.0,
     'entry_price': 0.0,
@@ -173,6 +174,7 @@ def fetch_current_price():
             out_amount = int(data['outAmount'])
             price = out_amount / 1e6  # USDC per SOL
             state['last_price'] = price  # Cache the price
+            state['last_fetch_time'] = current_time  # Update fetch time
             log(f"Price fetched: ${price:.2f}")
 
             # Update price history file
@@ -191,7 +193,6 @@ def fetch_current_price():
     except Exception as e:
         log(f"Price fetch error: {e}")
     return None
-
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_sol_balance():
     global state
