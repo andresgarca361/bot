@@ -78,7 +78,6 @@ log("Initializing Solana client...")
 client = Client(RPC_URLS[0])
 log(f"Connected to RPC: {client._provider.endpoint_uri}")
 
-# State
 # State (line 84)
 state = {
     'position': 0.0,
