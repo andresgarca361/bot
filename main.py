@@ -625,8 +625,6 @@ def main():
         loop_start = time.time()
         current_time = time.time()
         log("Loop iteration...")
-
-        # Fetch price every 60 seconds
         if current_time - state['last_fetch_time'] >= 60:
             price = fetch_current_price()
             if price:
@@ -635,16 +633,12 @@ def main():
                 price = state['price_history'][-1] if state['price_history'] else None
         else:
             price = state['price_history'][-1] if state['price_history'] else None
-
-        # Calculate indicators
         rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
         macd_line, signal_line = calculate_macd(state['price_history']) if len(state['price_history']) >= 34 else (None, None)
         vwap = calculate_vwap(state['price_history']) if len(state['price_history']) >= 20 else None
         upper_bb, lower_bb = calculate_bollinger_bands(state['price_history']) if len(state['price_history']) >= 20 else (None, None)
         atr = calculate_atr(state['price_history']) if len(state['price_history']) >= 21 else None
         momentum = calculate_momentum(state['price_history']) if len(state['price_history']) >= 11 else None
-
-        # Calculate avg_atr safely
         if atr is not None:
             state['atr_history'].append(atr)
             if len(state['atr_history']) > 50:
@@ -652,8 +646,6 @@ def main():
             avg_atr = np.mean(state['atr_history']) if state['atr_history'] else atr
         else:
             avg_atr = None
-
-        # Adjust TRADE_INTERVAL
         global TRADE_INTERVAL
         if atr is not None and avg_atr is not None and avg_atr > 0:
             TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
@@ -662,14 +654,10 @@ def main():
             elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
                 TRADE_INTERVAL = 45
             log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s")
-
-        # Portfolio pause check
         if current_time < state['pause_until']:
             log(f"Paused until {time.strftime('%H:%M:%S', time.localtime(state['pause_until']))}")
             time.sleep(TRADE_INTERVAL)
             continue
-
-        # Update portfolio stats
         portfolio_value = get_portfolio_value(price)
         if portfolio_value > state['peak_portfolio']:
             state['peak_portfolio'] = portfolio_value
@@ -683,26 +671,26 @@ def main():
             state['pause_until'] = current_time + 36 * 3600
             log("Drawdown >7%, pausing for 36 hours")
             continue
-
-        # Adjust triggers
         adjust_triggers(atr, avg_atr, rsi)
-
-        # Buy logic
-        if state['position'] == 0 and price:
+        if price:
+            total_sol_balance = get_sol_balance()
             if check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                 position_size = calculate_position_size(portfolio_value, atr, avg_atr)
                 if position_size > 0:
-                    execute_buy(position_size)
-
-        # Sell logic
-        total_sol_balance = get_sol_balance()  # Fetch total SOL balance
-        if total_sol_balance > MIN_SOL_THRESHOLD and price:  # Check if we can sell
-            if rsi is not None and rsi > 66:  # Overbought condition
-                amount_to_sell = min(total_sol_balance - MIN_SOL_THRESHOLD, total_sol_balance * 0.1)  # Sell up to 10% of balance
+                    new_position = state['position'] + position_size
+                    if new_position <= MAX_POSITION_SOL:
+                        execute_buy(position_size)
+                        log(f"New position after buy: {state['position']:.4f} SOL")
+                    else:
+                        log(f"Cannot buy: New position {new_position:.4f} SOL exceeds max {MAX_POSITION_SOL} SOL")
+        total_sol_balance = get_sol_balance()
+        if total_sol_balance > MIN_SOL_THRESHOLD and price:
+            if rsi is not None and rsi > 66:
+                amount_to_sell = min(total_sol_balance - MIN_SOL_THRESHOLD, total_sol_balance * 0.1)
                 if amount_to_sell > 0:
                     log("Selling SOL from wallet balance due to overbought condition")
-                    if state['position'] == 0:  # No prior buy
-                        state['entry_price'] = price  # Set entry price for profit tracking
+                    if state['position'] == 0:
+                        state['entry_price'] = price
                     execute_sell(amount_to_sell, price)
         elif state['position'] > 0 and price:
             if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
@@ -726,18 +714,13 @@ def main():
                             execute_sell(amount, price)
                             del state['sell_targets'][i]
                             break
-
-        # Log performance every 4 hours
         if current_time - last_stats_time >= 4 * 3600:
             log_performance(portfolio_value)
             last_stats_time = current_time
-
-        # Sleep
         elapsed = time.time() - loop_start
         sleep_time = max(0, TRADE_INTERVAL - elapsed)
         log(f"Sleeping for {sleep_time:.1f}s")
         time.sleep(sleep_time)
-
 def tcp_health_check():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
