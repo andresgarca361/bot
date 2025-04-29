@@ -399,7 +399,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
         log(f"Bid-ask spread too high ({bid_ask_spread*100:.2f}%), skipping buy")
         return False
     # Core requirements
-    if rsi >= 35 or macd_line <= signal_line * 1.1:
+    if rsi >= 35 or macd_line <= signal_line * 1.2:
         log(f"Core conditions failed: RSI={rsi:.2f}, MACD={macd_line:.4f}<={signal_line:.4f}")
         return False
     # Weighted scoring for additional indicators
