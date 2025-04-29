@@ -735,7 +735,7 @@ def main():
                         if state['position'] == 0:
                             state['entry_price'] = price
                         execute_sell(amount_to_sell, price)
-                        state['sell_pause_until'] = current_time + 1800  # 30-minute cooldown for sells
+                        state['sell_pause_until'] = current_time + 2700  # 30-minute cooldown for sells
                         log("Sell cooldown for 30 minutes")
             elif state['position'] > 0 and price:
                 if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
