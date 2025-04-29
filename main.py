@@ -411,7 +411,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
     vwap_score = 1 if price < vwap * 0.995 else 0
     bb_score = 1 if price < lower_bb * 1.01 else 0
     total_score = (momentum_weight * momentum_score) + (vwap_weight * vwap_score) + (bb_weight * bb_score)
-    signal = total_score >= 0.5  # Lowered from 0.6 to allow more buys
+    signal = total_score >= 0.3  # Lowered from 0.6 to allow more buys
     log(f"Buy signal check: {'True' if signal else 'False'} (RSI={rsi:.2f}, MACD={macd_line:.4f}>{signal_line:.4f}, Score={total_score:.2f})")
     return signal
 
