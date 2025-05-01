@@ -657,6 +657,7 @@ def load_state():
         log(f"Failed to load state: {e}")
 
 def main():
+    global TRADE_INTERVAL  # Declare at the start to avoid SyntaxError
     log("Entering main loop...")
     last_stats_time = time.time()
     while True:
@@ -698,7 +699,7 @@ def main():
             avg_atr = np.mean(state['atr_history']) if state['atr_history'] else atr
         else:
             avg_atr = None
-        global TRADE_INTERVAL
+        
         if atr is not None and avg_atr is not None and avg_atr > 0:
             TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
             if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 66)):
@@ -746,7 +747,7 @@ def main():
                         if state['position'] == 0:
                             state['entry_price'] = price
                         execute_sell(amount_to_sell, price)
-                        state['sell_pause_until'] = current_time + 2700  # 30-minute cooldown for sells
+                        state['sell_pause_until'] = current_time + 1800  # Corrected to 30-minute cooldown for sells
                         log("Sell cooldown for 30 minutes")
             elif state['position'] > 0 and price:
                 if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
