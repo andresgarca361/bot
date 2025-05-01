@@ -663,6 +663,20 @@ def main():
         loop_start = time.time()
         current_time = time.time()
         log("Loop iteration...")
+        
+        # Check pause first to avoid unnecessary calculations
+        if current_time < state['pause_until']:
+            rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
+            if rsi is not None and rsi > 50:
+                remaining_pause = state['pause_until'] - current_time
+                if remaining_pause > 6 * 3600:
+                    state['pause_until'] = current_time + 6 * 3600
+                    log("RSI > 50, reducing pause to 6 hours")
+            log(f"Paused until {time.strftime('%H:%M:%S', time.localtime(state['pause_until']))}")
+            time.sleep(TRADE_INTERVAL)
+            continue
+
+        # Fetch price and calculate indicators after pause check
         if current_time - state['last_fetch_time'] >= 60:
             price = fetch_current_price()
             if price:
@@ -692,10 +706,7 @@ def main():
             elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
                 TRADE_INTERVAL = 45
             log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s")
-        if current_time < state['pause_until']:
-            log(f"Paused until {time.strftime('%H:%M:%S', time.localtime(state['pause_until']))}")
-            time.sleep(TRADE_INTERVAL)
-            continue
+
         portfolio_value = get_portfolio_value(price)
         if portfolio_value > state['peak_portfolio']:
             state['peak_portfolio'] = portfolio_value
