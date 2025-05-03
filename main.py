@@ -664,7 +664,7 @@ def main():
         loop_start = time.time()
         current_time = time.time()
         log("Loop iteration...")
-        log(f"Current time: {time.strftime('%H:%M:%S', time.localtime(current_time))} (epoch: {current_time})")  # Log current time for debugging
+        log(f"Current time: {time.strftime('%H:%M:%S', time.localtime(current_time))} (epoch: {current_time})")
         
         # Check pause and force update if past due
         if current_time < state['pause_until']:
@@ -678,7 +678,6 @@ def main():
             time.sleep(TRADE_INTERVAL)
             continue
         else:
-            # Clear pause if current time has passed the pause_until time
             if state['pause_until'] != 0:
                 log("Pause time passed, resuming trading")
                 state['pause_until'] = 0
@@ -723,10 +722,6 @@ def main():
         if drawdown > 10:
             state['pause_until'] = current_time + 48 * 3600
             log("Drawdown >10%, pausing for 48 hours")
-            continue
-        elif drawdown > 7:
-            state['pause_until'] = current_time + 36 * 3600
-            log("Drawdown >7%, pausing for 36 hours")
             continue
         adjust_triggers(atr, avg_atr, rsi)
         if price:
