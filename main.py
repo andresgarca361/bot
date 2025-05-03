@@ -657,15 +657,16 @@ def load_state():
         log(f"Failed to load state: {e}")
 
 def main():
-    global TRADE_INTERVAL  # Declare at the start to avoid SyntaxError
+    global TRADE_INTERVAL
     log("Entering main loop...")
     last_stats_time = time.time()
     while True:
         loop_start = time.time()
         current_time = time.time()
         log("Loop iteration...")
+        log(f"Current time: {time.strftime('%H:%M:%S', time.localtime(current_time))} (epoch: {current_time})")  # Log current time for debugging
         
-        # Check pause first to avoid unnecessary calculations
+        # Check pause and force update if past due
         if current_time < state['pause_until']:
             rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
             if rsi is not None and rsi > 50:
@@ -676,6 +677,12 @@ def main():
             log(f"Paused until {time.strftime('%H:%M:%S', time.localtime(state['pause_until']))}")
             time.sleep(TRADE_INTERVAL)
             continue
+        else:
+            # Clear pause if current time has passed the pause_until time
+            if state['pause_until'] != 0:
+                log("Pause time passed, resuming trading")
+                state['pause_until'] = 0
+                save_state()
 
         # Fetch price and calculate indicators after pause check
         if current_time - state['last_fetch_time'] >= 60:
@@ -724,21 +731,21 @@ def main():
         adjust_triggers(atr, avg_atr, rsi)
         if price:
             total_sol_balance = get_sol_balance()
-            if current_time >= state['buy_pause_until']:  # Check buy cooldown
+            if current_time >= state['buy_pause_until']:
                 if check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                     position_size = calculate_position_size(portfolio_value, atr, avg_atr)
                     if position_size > 0:
                         new_position = state['position'] + position_size
                         if new_position <= MAX_POSITION_SOL:
                             execute_buy(position_size)
-                            state['buy_pause_until'] = current_time + 1800  # 30-minute cooldown for buys
+                            state['buy_pause_until'] = current_time + 1800
                             log(f"New position after buy: {state['position']:.4f} SOL, buy cooldown for 30 minutes")
                         else:
                             log(f"Cannot buy: New position {new_position:.4f} SOL exceeds max {MAX_POSITION_SOL} SOL")
             else:
                 log(f"Buy on cooldown until {time.strftime('%H:%M:%S', time.localtime(state['buy_pause_until']))}")
         total_sol_balance = get_sol_balance()
-        if current_time >= state['sell_pause_until']:  # Check sell cooldown
+        if current_time >= state['sell_pause_until']:
             if total_sol_balance > MIN_SOL_THRESHOLD and price:
                 if rsi is not None and rsi > 66:
                     amount_to_sell = min(total_sol_balance - MIN_SOL_THRESHOLD, total_sol_balance * 0.1)
@@ -747,25 +754,25 @@ def main():
                         if state['position'] == 0:
                             state['entry_price'] = price
                         execute_sell(amount_to_sell, price)
-                        state['sell_pause_until'] = current_time + 1800  # Corrected to 30-minute cooldown for sells
+                        state['sell_pause_until'] = current_time + 1800
                         log("Sell cooldown for 30 minutes")
             elif state['position'] > 0 and price:
                 if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
                     log("Hit stop-loss, selling position")
                     execute_sell(state['position'], price)
-                    state['sell_pause_until'] = current_time + 1800  # 30-minute cooldown for sells
+                    state['sell_pause_until'] = current_time + 1800
                     log("Sell cooldown for 30 minutes")
                 elif price >= state['entry_price'] * 1.035:
                     state['highest_price'] = max(state['highest_price'], price)
                     if rsi is not None and rsi > 66:
                         log("RSI overbought, selling position")
                         execute_sell(state['position'], price)
-                        state['sell_pause_until'] = current_time + 1800  # 30-minute cooldown for sells
+                        state['sell_pause_until'] = current_time + 1800
                         log("Sell cooldown for 30 minutes")
                     elif price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
                         log("Hit trailing stop, selling position")
                         execute_sell(state['position'], price)
-                        state['sell_pause_until'] = current_time + 1800  # 30-minute cooldown for sells
+                        state['sell_pause_until'] = current_time + 1800
                         log("Sell cooldown for 30 minutes")
                 else:
                     sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
@@ -775,7 +782,7 @@ def main():
                             min_profit = 0.02 if portfolio_value < 100 else 1
                             if (price - state['entry_price']) * amount > min_profit:
                                 execute_sell(amount, price)
-                                state['sell_pause_until'] = current_time + 1800  # 30-minute cooldown for sells
+                                state['sell_pause_until'] = current_time + 1800
                                 log("Sell cooldown for 30 minutes")
                                 del state['sell_targets'][i]
                                 break
