@@ -719,16 +719,12 @@ def main():
             state['peak_portfolio'] = portfolio_value
         drawdown = (state['peak_portfolio'] - portfolio_value) / state['peak_portfolio'] * 100 if state['peak_portfolio'] > 0 else 0
         log(f"Portfolio: ${portfolio_value:.2f}, Drawdown: {drawdown:.2f}%")
-        # Dynamic drawdown threshold
-        if portfolio_value < 100:
-            pause_threshold = 10
-        elif portfolio_value < 1000:
-            pause_threshold = 15
-        else:
-            pause_threshold = 20
+        # Dynamic drawdown threshold with new formula
+        atr_adjust = atr * 2 if atr else 0
+        pause_threshold = max(10, min(20, 10 + (portfolio_value * 0.0001) + atr_adjust))
         if drawdown > pause_threshold:
             state['pause_until'] = current_time + 48 * 3600
-            log(f"Drawdown >{pause_threshold}%, pausing for 48 hours")
+            log(f"Drawdown >{pause_threshold:.2f}%, pausing for 48 hours")
             continue
         adjust_triggers(atr, avg_atr, rsi)
         if price:
