@@ -743,6 +743,7 @@ def main():
                     price = new_price
                     state['last_price'] = price
                 state['last_fetch_time'] = current_time
+                save_state()  # Persist last_price
             else:
                 price = state['last_price'] if state['last_price'] else (state['price_history'][-1] if state['price_history'] else 142.0)
         else:
@@ -773,13 +774,16 @@ def main():
             vwap, upper_bb, lower_bb = cached_vwap, cached_upper_bb, cached_lower_bb
             atr, momentum, avg_atr = cached_atr, cached_momentum, cached_avg_atr
         
+        # Adjust TRADE_INTERVAL and cooldown duration based on volatility
+        cooldown_duration = 1800  # Default 30 minutes
         if atr is not None and avg_atr is not None and avg_atr > 0:
             TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
             if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 66)):
                 TRADE_INTERVAL = 4
+                cooldown_duration = 900  # 15 minutes during high volatility
             elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
                 TRADE_INTERVAL = 45
-            log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s")
+            log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s, Cooldown: {cooldown_duration//60} minutes")
 
         portfolio_value = get_portfolio_value(price)
         # Update peak with timestamp
@@ -801,26 +805,23 @@ def main():
 
         adjust_triggers(atr, avg_atr, rsi)
         if price:
+            # Fetch SOL balance once per loop
             total_sol_balance = get_sol_balance()
-            # Use a single trade cooldown
-            if 'trade_cooldown_until' not in state:
-                state['trade_cooldown_until'] = 0
             if current_time >= state['trade_cooldown_until']:
                 if check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                     position_size = calculate_position_size(portfolio_value, atr, avg_atr)
                     if position_size > 0:
                         new_position = state['position'] + position_size
                         if new_position <= MAX_POSITION_SOL:
-                            execute_buy(position_size)
-                            state['trade_cooldown_until'] = current_time + 1800
-                            log(f"New position after buy: {state['position']:.4f} SOL, trade cooldown for 30 minutes")
+                            execute_buy(position_size, price)  # Pass price
+                            state['trade_cooldown_until'] = current_time + cooldown_duration
+                            log(f"New position after buy: {state['position']:.4f} SOL, trade cooldown for {cooldown_duration//60} minutes")
                             save_state()
                         else:
                             log(f"Cannot buy: New position {new_position:.4f} SOL exceeds max {MAX_POSITION_SOL} SOL")
             else:
                 log(f"Trade on cooldown until {time.strftime('%H:%M:%S', time.localtime(state['trade_cooldown_until']))}")
 
-            total_sol_balance = get_sol_balance()
             if current_time >= state['trade_cooldown_until']:
                 if total_sol_balance > MIN_SOL_THRESHOLD and price:
                     if rsi is not None and rsi > 66:
@@ -829,30 +830,30 @@ def main():
                             log("Selling SOL from wallet balance due to overbought condition")
                             if state['position'] == 0:
                                 state['entry_price'] = price
-                            execute_sell(amount_to_sell, price)
-                            state['trade_cooldown_until'] = current_time + 1800
-                            log("Trade cooldown for 30 minutes")
+                            execute_sell(amount_to_sell, price)  # Pass price
+                            state['trade_cooldown_until'] = current_time + cooldown_duration
+                            log(f"Trade cooldown for {cooldown_duration//60} minutes")
                             save_state()
                 elif state['position'] > 0 and price:
                     if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
                         log("Hit stop-loss, selling position")
-                        execute_sell(state['position'], price)
-                        state['trade_cooldown_until'] = current_time + 1800
-                        log("Trade cooldown for 30 minutes")
+                        execute_sell(state['position'], price)  # Pass price
+                        state['trade_cooldown_until'] = current_time + cooldown_duration
+                        log(f"Trade cooldown for {cooldown_duration//60} minutes")
                         save_state()
                     elif price >= state['entry_price'] * 1.035:
                         state['highest_price'] = max(state['highest_price'], price)
                         if rsi is not None and rsi > 66:
                             log("RSI overbought, selling position")
-                            execute_sell(state['position'], price)
-                            state['trade_cooldown_until'] = current_time + 1800
-                            log("Trade cooldown for 30 minutes")
+                            execute_sell(state['position'], price)  # Pass price
+                            state['trade_cooldown_until'] = current_time + cooldown_duration
+                            log(f"Trade cooldown for {cooldown_duration//60} minutes")
                             save_state()
                         elif price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
                             log("Hit trailing stop, selling position")
-                            execute_sell(state['position'], price)
-                            state['trade_cooldown_until'] = current_time + 1800
-                            log("Trade cooldown for 30 minutes")
+                            execute_sell(state['position'], price)  # Pass price
+                            state['trade_cooldown_until'] = current_time + cooldown_duration
+                            log(f"Trade cooldown for {cooldown_duration//60} minutes")
                             save_state()
                     else:
                         sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
@@ -861,9 +862,9 @@ def main():
                             if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
                                 min_profit = 0.02 if portfolio_value < 100 else 1
                                 if (price - state['entry_price']) * amount > min_profit:
-                                    execute_sell(amount, price)
-                                    state['trade_cooldown_until'] = current_time + 1800
-                                    log("Trade cooldown for 30 minutes")
+                                    execute_sell(amount, price)  # Pass price
+                                    state['trade_cooldown_until'] = current_time + cooldown_duration
+                                    log(f"Trade cooldown for {cooldown_duration//60} minutes")
                                     save_state()
                                     del state['sell_targets'][i]
                                     break
