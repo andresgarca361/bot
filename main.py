@@ -663,32 +663,16 @@ def main():
     if 'peak_timestamp' not in state:
         state['peak_timestamp'] = time.time()
         state['version'] = "1.0"
-    # Ensure trade_cooldown_until is initialized
     if 'trade_cooldown_until' not in state:
         state['trade_cooldown_until'] = 0
         save_state()
     # Reset peak if older than 7 days (604800 seconds)
     if time.time() - state['peak_timestamp'] > 604800:
-        log(f"Peak portfolio ${state['peak_portfolio']:.2f} is over 7 days old, resetting to current value")
-        price = fetch_current_price() or state.get('last_price')
+        log(f"Peak portfolio ${state['peak_portfolio']:.2f} is over 7 days old, resetting")
+        price = fetch_current_price()
         if not price:
-            # Calculate moving average from price history if available
-            if state['price_history'] and len(state['price_history']) >= 7:
-                price = np.mean(state['price_history'][-7:])
-                log(f"Using 7-day moving average price: ${price:.2f}")
-            else:
-                # Fallback to fetching a recent price via an alternative method
-                try:
-                    response = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd", timeout=5)
-                    if response.status_code == 200:
-                        price = response.json()['solana']['usd']
-                        log(f"Fetched fallback price from CoinGecko: ${price:.2f}")
-                    else:
-                        price = 142.0  # Last known price from user data
-                        log(f"Using last known price as fallback: ${price:.2f}")
-                except Exception as e:
-                    price = 142.0
-                    log(f"Failed to fetch fallback price, using last known: ${price:.2f}, error: {e}")
+            price = state.get('last_price', state['price_history'][-1] if state['price_history'] else 142.0)
+            log(f"Using fallback price: ${price:.2f}")
         portfolio_value = get_portfolio_value(price)
         state['peak_portfolio'] = portfolio_value
         state['peak_timestamp'] = time.time()
@@ -736,23 +720,18 @@ def main():
                     state['pause_until'] = 0
                     save_state()
 
-            # Fetch price with sanity check
-            if current_time - state['last_fetch_time'] >= 60:
-                new_price = fetch_current_price()
-                if new_price:
-                    # Sanity check: if price deviates >50% from last known price, use last price
-                    if state['last_price'] and abs(new_price - state['last_price']) / state['last_price'] > 0.5:
-                        log(f"Price ${new_price:.2f} deviates >50% from last price ${state['last_price']:.2f}, using last price")
-                        price = state['last_price']
-                    else:
-                        price = new_price
-                        state['last_price'] = price
-                    state['last_fetch_time'] = current_time
-                    save_state()  # Persist last_price
-                else:
-                    price = state['last_price'] if state['last_price'] else (state['price_history'][-1] if state['price_history'] else 142.0)
+            # Fetch price with fallback
+            price = fetch_current_price()
+            if price is None:
+                price = state.get('last_price', state['price_history'][-1] if state['price_history'] else 142.0)
+                log(f"Price fetch failed, using fallback: ${price:.2f}")
             else:
-                price = state['last_price'] if state['last_price'] else (state['price_history'][-1] if state['price_history'] else 142.0)
+                state['last_price'] = price
+                state['price_history'].append(price)
+                if len(state['price_history']) > 200:
+                    state['price_history'].pop(0)
+                state['last_fetch_time'] = current_time
+                save_state()
 
             # Update indicators every 60 seconds
             if current_time - last_indicator_time >= 60:
@@ -760,7 +739,7 @@ def main():
                 macd_line, signal_line = calculate_macd(state['price_history']) if len(state['price_history']) >= 34 else (None, None)
                 vwap = calculate_vwap(state['price_history']) if len(state['price_history']) >= 20 else None
                 upper_bb, lower_bb = calculate_bollinger_bands(state['price_history']) if len(state['price_history']) >= 20 else (None, None)
-                atr = calculate_atr(state['price_history']) if len(state['price_history']) >= 21 else 2.0  # Default ATR
+                atr = calculate_atr(state['price_history']) if len(state['price_history']) >= 21 else 2.0
                 momentum = calculate_momentum(state['price_history']) if len(state['price_history']) >= 11 else None
                 if atr is not None:
                     state['atr_history'].append(atr)
@@ -769,7 +748,6 @@ def main():
                     avg_atr = np.mean(state['atr_history']) if state['atr_history'] else atr
                 else:
                     avg_atr = 2.0
-                # Cache values
                 cached_rsi, cached_macd_line, cached_signal_line = rsi, macd_line, signal_line
                 cached_vwap, cached_upper_bb, cached_lower_bb = vwap, upper_bb, lower_bb
                 cached_atr, cached_momentum, cached_avg_atr = atr, momentum, avg_atr
@@ -779,34 +757,36 @@ def main():
                 vwap, upper_bb, lower_bb = cached_vwap, cached_upper_bb, cached_lower_bb
                 atr, momentum, avg_atr = cached_atr, cached_momentum, cached_avg_atr
             
-            # Adjust TRADE_INTERVAL and cooldown duration based on volatility
-            cooldown_duration = 1800  # Default 30 minutes
+            # Adjust TRADE_INTERVAL and cooldown
+            cooldown_duration = 1800
             if atr is not None and avg_atr is not None and avg_atr > 0:
                 TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
                 if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 66)):
                     TRADE_INTERVAL = 4
-                    cooldown_duration = 900  # 15 minutes during high volatility
+                    cooldown_duration = 900
                 elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
                     TRADE_INTERVAL = 45
-                log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s, Cooldown: {cooldown_duration//60} minutes")
+                log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s, Cooldown: {cooldown_duration//60} min")
             else:
-                log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s (default), Cooldown: {cooldown_duration//60} minutes")
+                log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s (default), Cooldown: {cooldown_duration//60} min")
 
             portfolio_value = get_portfolio_value(price) if price else 0.0
-            # Update peak with timestamp
-            if portfolio_value > state['peak_portfolio']:
+            # Update peak with sanity check
+            if portfolio_value > state['peak_portfolio'] and portfolio_value < 100:  # Cap at $100
                 state['peak_portfolio'] = portfolio_value
                 state['peak_timestamp'] = current_time
+                log(f"Peak portfolio updated to ${portfolio_value:.2f}")
             drawdown = (state['peak_portfolio'] - portfolio_value) / state['peak_portfolio'] * 100 if state['peak_portfolio'] > 0 else 0
             drawdown_usd = state['peak_portfolio'] - portfolio_value
             log(f"Portfolio: ${portfolio_value:.2f}, Drawdown: {drawdown:.2f}% (${drawdown_usd:.2f})")
-            # Dynamic drawdown threshold with minimum USD loss
+            # Dynamic pause threshold
             atr_adjust = atr * 2 if atr else 0
             pause_threshold = max(10, min(20, 10 + (portfolio_value * 0.0001) + atr_adjust))
             min_usd_loss = 5.0
             if drawdown > pause_threshold and drawdown_usd >= min_usd_loss:
-                state['pause_until'] = current_time + 48 * 3600
-                log(f"Drawdown >{pause_threshold:.2f}% and loss ${drawdown_usd:.2f} >= ${min_usd_loss}, pausing for 48 hours")
+                pause_duration = 6 * 3600 if rsi and rsi > 50 else 48 * 3600
+                state['pause_until'] = current_time + pause_duration
+                log(f"Drawdown >{pause_threshold:.2f}% and loss ${drawdown_usd:.2f}, pausing for {pause_duration/3600} hours")
                 save_state()
                 continue
 
@@ -816,25 +796,11 @@ def main():
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            # Fetch SOL balance once per loop
             total_sol_balance = get_sol_balance()
             if total_sol_balance is None:
                 log("Failed to fetch SOL balance, skipping trade logic")
                 time.sleep(TRADE_INTERVAL)
                 continue
-
-            # Ensure price is fresh for execute_buy and execute_sell
-            if current_time - state['last_fetch_time'] >= 5:  # Align with fetch_current_price cache
-                new_price = fetch_current_price()
-                if new_price:
-                    if state['last_price'] and abs(new_price - state['last_price']) / state['last_price'] > 0.5:
-                        log(f"Price ${new_price:.2f} deviates >50% from last price ${state['last_price']:.2f}, using last price")
-                        price = state['last_price']
-                    else:
-                        price = new_price
-                        state['last_price'] = price
-                    state['last_fetch_time'] = current_time
-                    save_state()
 
             if current_time >= state['trade_cooldown_until']:
                 if check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
@@ -842,9 +808,9 @@ def main():
                     if position_size > 0:
                         new_position = state['position'] + position_size
                         if new_position <= MAX_POSITION_SOL:
-                            execute_buy(position_size)  # Relies on state['last_price']
+                            execute_buy(position_size)
                             state['trade_cooldown_until'] = current_time + cooldown_duration
-                            log(f"New position after buy: {state['position']:.4f} SOL, trade cooldown for {cooldown_duration//60} minutes")
+                            log(f"New position: {state['position']:.4f} SOL, cooldown for {cooldown_duration//60} min")
                             save_state()
                         else:
                             log(f"Cannot buy: New position {new_position:.4f} SOL exceeds max {MAX_POSITION_SOL} SOL")
@@ -856,33 +822,29 @@ def main():
                     if rsi is not None and rsi > 66:
                         amount_to_sell = min(total_sol_balance - MIN_SOL_THRESHOLD, total_sol_balance * 0.1)
                         if amount_to_sell > 0:
-                            log("Selling SOL from wallet balance due to overbought condition")
+                            log("Selling due to overbought RSI")
                             if state['position'] == 0:
                                 state['entry_price'] = price
-                            execute_sell(amount_to_sell, price)  # Relies on state['last_price']
+                            execute_sell(amount_to_sell, price)
                             state['trade_cooldown_until'] = current_time + cooldown_duration
-                            log(f"Trade cooldown for {cooldown_duration//60} minutes")
                             save_state()
                 elif state['position'] > 0 and price:
                     if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
-                        log("Hit stop-loss, selling position")
+                        log("Hit stop-loss, selling")
                         execute_sell(state['position'], price)
                         state['trade_cooldown_until'] = current_time + cooldown_duration
-                        log(f"Trade cooldown for {cooldown_duration//60} minutes")
                         save_state()
                     elif price >= state['entry_price'] * 1.035:
                         state['highest_price'] = max(state['highest_price'], price)
                         if rsi is not None and rsi > 66:
-                            log("RSI overbought, selling position")
+                            log("RSI overbought, selling")
                             execute_sell(state['position'], price)
                             state['trade_cooldown_until'] = current_time + cooldown_duration
-                            log(f"Trade cooldown for {cooldown_duration//60} minutes")
                             save_state()
                         elif price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
-                            log("Hit trailing stop, selling position")
+                            log("Hit trailing stop, selling")
                             execute_sell(state['position'], price)
                             state['trade_cooldown_until'] = current_time + cooldown_duration
-                            log(f"Trade cooldown for {cooldown_duration//60} minutes")
                             save_state()
                     else:
                         sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
@@ -893,7 +855,6 @@ def main():
                                 if (price - state['entry_price']) * amount > min_profit:
                                     execute_sell(amount, price)
                                     state['trade_cooldown_until'] = current_time + cooldown_duration
-                                    log(f"Trade cooldown for {cooldown_duration//60} minutes")
                                     save_state()
                                     del state['sell_targets'][i]
                                     break
