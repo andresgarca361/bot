@@ -771,11 +771,18 @@ def main():
                 log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s (default), Cooldown: {cooldown_duration//60} min")
 
             portfolio_value = get_portfolio_value(price) if price else 0.0
-            # Update peak with sanity check
-            if portfolio_value > state['peak_portfolio'] and portfolio_value < 100:  # Cap at $100
-                state['peak_portfolio'] = portfolio_value
-                state['peak_timestamp'] = current_time
-                log(f"Peak portfolio updated to ${portfolio_value:.2f}")
+            # Validate and update peak_portfolio
+            if portfolio_value > 0:  # Ensure we have a valid portfolio value
+                # If peak_portfolio is unset or deviates too much (e.g., >50% difference), reset it
+                if state['peak_portfolio'] == 0 or (state['peak_portfolio'] > 0 and abs(state['peak_portfolio'] - portfolio_value) / portfolio_value > 0.5):
+                    state['peak_portfolio'] = portfolio_value
+                    state['peak_timestamp'] = current_time
+                    log(f"Reset peak_portfolio to current value: ${portfolio_value:.2f}")
+                # Update peak if current portfolio is higher
+                elif portfolio_value > state['peak_portfolio']:
+                    state['peak_portfolio'] = portfolio_value
+                    state['peak_timestamp'] = current_time
+                    log(f"Peak portfolio updated to ${portfolio_value:.2f}")
             drawdown = (state['peak_portfolio'] - portfolio_value) / state['peak_portfolio'] * 100 if state['peak_portfolio'] > 0 else 0
             drawdown_usd = state['peak_portfolio'] - portfolio_value
             log(f"Portfolio: ${portfolio_value:.2f}, Drawdown: {drawdown:.2f}% (${drawdown_usd:.2f})")
