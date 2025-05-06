@@ -163,7 +163,7 @@ def initialize_price_history():
 def fetch_current_price():
     log("Fetching USDC/SOL price...")
     current_time = time.time()
-    if 'last_price' in state and current_time - state['last_fetch_time'] < 5:
+    if 'last_price' in state and current_time - state['last_fetch_time'] < 1:  # Reduced from 5 to 1 second
         log(f"Using cached price: ${state['last_price']:.2f}")
         return state['last_price']
         
