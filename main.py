@@ -163,7 +163,6 @@ def initialize_price_history():
 def fetch_current_price():
     log("Fetching USDC/SOL price...")
     current_time = time.time()
-    # Reuse cached price if fetched within the last 5 seconds
     if 'last_price' in state and current_time - state['last_fetch_time'] < 5:
         log(f"Using cached price: ${state['last_price']:.2f}")
         return state['last_price']
@@ -175,26 +174,16 @@ def fetch_current_price():
             data = response.json()
             out_amount = int(data['outAmount'])
             price = out_amount / 1e6  # USDC per SOL
-            state['last_price'] = price  # Cache the price
-            state['last_fetch_time'] = current_time  # Update fetch time
+            state['last_price'] = price
+            state['last_fetch_time'] = current_time
             log(f"Price fetched: ${price:.2f}")
-
-            # Update price history file
-            state['price_history'].append(price)
-            if len(state['price_history']) > 200:
-                state['price_history'].pop(0)
-            try:
-                with open('price_history.json', 'w') as f:
-                    json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
-            except Exception as e:
-                log(f"Failed to save price history: {e}")
-
             return price
         else:
-            log(f"Price fetch failed: Status {response.status_code}")
+            log(f"Price fetch failed: Status {response.status_code}, Response: {response.text}")
+            return None
     except Exception as e:
-        log(f"Price fetch error: {e}")
-    return None
+        log(f"Price fetch error: {str(e)}")
+        return None
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_sol_balance():
     global state
@@ -660,11 +649,16 @@ def main():
 
     if time.time() - state['peak_timestamp'] > 604800:
         log(f"Peak portfolio ${state['peak_portfolio']:.2f} is over 7 days old, resetting")
-        price = fetch_current_price() or state.get('last_price', 142.0)
-        portfolio_value = get_portfolio_value(price)
-        state['peak_portfolio'] = portfolio_value
-        state['peak_timestamp'] = time.time()
-        save_state()
+        price = fetch_current_price()
+        if price is None:
+            price = state.get('last_price', state['price_history'][-1] if state['price_history'] else None)
+        if price is None:
+            log("Cannot reset peak portfolio without a price")
+        else:
+            portfolio_value = get_portfolio_value(price)
+            state['peak_portfolio'] = portfolio_value
+            state['peak_timestamp'] = time.time()
+            save_state()
 
     if state['peak_portfolio'] > 24 or state['pause_until'] != 0:
         log(f"Resetting peak_portfolio from ${state['peak_portfolio']:.2f} to $23 and clearing pause")
@@ -710,18 +704,29 @@ def main():
 
             price = fetch_current_price()
             if price is None:
-                price = state.get('last_price', state['price_history'][-1] if state['price_history'] else 142.0)
-                log(f"Price fetch failed, using fallback: ${price:.2f}")
-            else:
-                state['last_price'] = price
-                state['price_history'].append(price)
-                if len(state['price_history']) > 200:
-                    state['price_history'].pop(0)
-                state['last_fetch_time'] = current_time
-                save_state()
+                if not state['price_history']:
+                    log("No price history available, cannot proceed without a price")
+                    time.sleep(TRADE_INTERVAL)
+                    continue
+                price = state['price_history'][-1]  # Use last price from history
+                log(f"Price fetch failed, using last known price from history: ${price:.2f}")
+            state['last_price'] = price
+            state['price_history'].append(price)
+            if len(state['price_history']) > 200:
+                state['price_history'].pop(0)
+            state['last_fetch_time'] = current_time
+            save_state()
+
+            # Save price history to file (moved from fetch_current_price)
+            try:
+                with open('price_history.json', 'w') as f:
+                    json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
+            except Exception as e:
+                log(f"Failed to save price history: {e}")
 
             if len(state['price_history']) < 34 or len(set(state['price_history'][-34:])) < 2:
                 log(f"Waiting for price data: {len(state['price_history'])}/34 prices collected, or insufficient variation")
+                log(f"Last 34 prices: {[round(p, 2) for p in state['price_history'][-34:]]}")
                 time.sleep(TRADE_INTERVAL)
                 continue
 
@@ -780,7 +785,7 @@ def main():
             log(f"Portfolio: ${portfolio_value:.2f}, Drawdown: {drawdown:.2f}% (${drawdown_usd:.2f})")
             atr_adjust = atr * 2 if atr else 0
             pause_threshold = max(10, min(20, 10 + (portfolio_value * 0.0001) + atr_adjust))
-            min_usd_loss = 5.0
+            min_usd_loss = 5.0  # Kept at original value as requested
             if drawdown > pause_threshold and drawdown_usd >= min_usd_loss:
                 pause_duration = 6 * 3600 if rsi and rsi > 50 else 48 * 3600
                 state['pause_until'] = current_time + pause_duration
