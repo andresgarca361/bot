@@ -293,45 +293,38 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
     if len(prices) < slow + signal - 1:
         log("Not enough prices for MACD")
         return None, None
+    if len(set(prices[-slow-signal+1:])) < 2:  # Check for price variation
+        log("Price history has insufficient variation for MACD")
+        return None, None
     
-    # Convert prices to numpy array for efficiency
     prices = np.array(prices)
-    
-    # Calculate EMA using the standard formula: EMA = (Price * k) + (Previous EMA * (1 - k))
-    # where k = 2 / (period + 1)
     def calculate_ema(prices, period):
         k = 2 / (period + 1)
-        ema = prices[0]  # Start with the first price
+        ema = prices[0]
         ema_values = [ema]
         for price in prices[1:]:
             ema = (price * k) + (ema * (1 - k))
             ema_values.append(ema)
         return ema_values
     
-    # Calculate fast and slow EMAs
     ema_fast_values = calculate_ema(prices, fast)
     ema_slow_values = calculate_ema(prices, slow)
     
-    # Ensure we have enough data after EMA calculation
     if len(ema_fast_values) < slow or len(ema_slow_values) < slow:
         log("Not enough EMA values for MACD")
         return None, None
     
-    # MACD line is the difference between the latest fast and slow EMAs
     macd_line = ema_fast_values[-1] - ema_slow_values[-1]
     
-    # Calculate MACD history for the signal line
     macd_history = []
     for i in range(len(prices) - slow + 1, len(prices)):
         macd_value = ema_fast_values[i] - ema_slow_values[i]
         macd_history.append(macd_value)
     
-    # Ensure we have enough MACD history for the signal line
     if len(macd_history) < signal:
         log("Not enough MACD history for signal line")
         return None, None
     
-    # Signal line is the 9-period EMA of the MACD line
     signal_values = calculate_ema(np.array(macd_history), signal)
     signal_line = signal_values[-1]
     
@@ -727,8 +720,8 @@ def main():
                 state['last_fetch_time'] = current_time
                 save_state()
 
-            if len(state['price_history']) < 34:
-                log(f"Waiting for price data: {len(state['price_history'])}/34 prices collected")
+            if len(state['price_history']) < 34 or len(set(state['price_history'][-34:])) < 2:
+                log(f"Waiting for price data: {len(state['price_history'])}/34 prices collected, or insufficient variation")
                 time.sleep(TRADE_INTERVAL)
                 continue
 
@@ -855,7 +848,7 @@ def main():
                         sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
                         hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 66)
                         for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
-                            if price >= target_price and (not hold_final or i < len(state['sell_targets'] - 1)):
+                            if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
                                 min_profit = 0.02 if portfolio_value < 100 else 1
                                 if (price - state['entry_price']) * amount > min_profit:
                                     execute_sell(amount, price)
