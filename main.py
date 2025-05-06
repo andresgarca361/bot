@@ -848,7 +848,7 @@ def main():
                         sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
                         hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 66)
                         for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
-                            if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
+                            if price >= target_price and (not hold_final or i < len(state['sell_targets'] - 1)):
                                 min_profit = 0.02 if portfolio_value < 100 else 1
                                 if (price - state['entry_price']) * amount > min_profit:
                                     execute_sell(amount, price)
