@@ -268,18 +268,18 @@ def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
         log("Not enough prices for RSI")
         return None
-    # Use only the last (period + 1) prices to avoid slowdown
+    if len(set(prices[-period-1:])) < 2:  # Check for price variation
+        log("Price history has insufficient variation for RSI")
+        return None
     relevant_prices = prices[-(period + 1):]
     changes = np.diff(relevant_prices)
     gains = np.where(changes > 0, changes, 0)
     losses = np.where(changes < 0, -changes, 0)
-    # Direct EMA calculation
     avg_gain = gains.mean()
     avg_loss = losses.mean()
     for i in range(1, len(gains)):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-    # Prevent division by zero or very small loss
     if avg_loss < 0.0001:
         avg_loss = 0.0001
     rs = avg_gain / avg_loss
@@ -388,24 +388,24 @@ def adjust_triggers(atr, avg_atr, rsi):
 
 def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
     if any(x is None for x in [rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr]):
-        log("Missing indicators, skipping buy")
+        log("Missing or invalid indicators, skipping buy")
+        return False
+    if rsi <= 0 or macd_line == 0 or signal_line == 0:  # Prevent invalid calculations
+        log(f"Invalid indicator values: RSI={rsi}, MACD={macd_line}, Signal={signal_line}, skipping buy")
         return False
     fee = get_fee_estimate()
     if fee > 0.0035:
         log(f"Fees too high ({fee*100:.2f}%), skipping buy")
         return False
-    # Bid-ask spread check
     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
     spread_condition = bid_ask_spread < 0.005
     if not spread_condition:
         log(f"Bid-ask spread too high ({bid_ask_spread*100:.2f}%), skipping buy")
         return False
-    # Core requirements
     multiplier = 1.2 if signal_line < 0 else 0.8
     if rsi >= 35 or macd_line <= signal_line * multiplier:
         log(f"Core conditions failed: RSI={rsi:.2f}, MACD={macd_line:.4f}<={signal_line:.4f}")
         return False
-    # Weighted scoring for additional indicators
     momentum_weight = 0.4
     vwap_weight = 0.3
     bb_weight = 0.3
@@ -413,7 +413,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
     vwap_score = 1 if price < vwap * 0.995 else 0
     bb_score = 1 if price < lower_bb * 1.01 else 0
     total_score = (momentum_weight * momentum_score) + (vwap_weight * vwap_score) + (bb_weight * bb_score)
-    signal = total_score >= 0.3  # Lowered from 0.6 to allow more buys
+    signal = total_score >= 0.3
     log(f"Buy signal check: {'True' if signal else 'False'} (RSI={rsi:.2f}, MACD={macd_line:.4f}>{signal_line:.4f}, Score={total_score:.2f})")
     return signal
 
@@ -659,26 +659,20 @@ def load_state():
 def main():
     global TRADE_INTERVAL
     log("Entering main loop...")
-    # Initialize state with peak timestamp and version if not present
     if 'peak_timestamp' not in state:
         state['peak_timestamp'] = time.time()
     if 'trade_cooldown_until' not in state:
         state['trade_cooldown_until'] = 0
     save_state()
 
-    # Reset peak if older than 7 days (604800 seconds)
     if time.time() - state['peak_timestamp'] > 604800:
         log(f"Peak portfolio ${state['peak_portfolio']:.2f} is over 7 days old, resetting")
-        price = fetch_current_price()
-        if not price:
-            price = state.get('last_price', state['price_history'][-1] if state['price_history'] else 142.0)
-            log(f"Using fallback price: ${price:.2f}")
+        price = fetch_current_price() or state.get('last_price', 142.0)
         portfolio_value = get_portfolio_value(price)
         state['peak_portfolio'] = portfolio_value
         state['peak_timestamp'] = time.time()
         save_state()
 
-    # One-time reset for incorrect peak or pause
     if state['peak_portfolio'] > 24 or state['pause_until'] != 0:
         log(f"Resetting peak_portfolio from ${state['peak_portfolio']:.2f} to $23 and clearing pause")
         state['peak_portfolio'] = 23.0
@@ -704,7 +698,6 @@ def main():
             current_time = time.time()
             log("Loop iteration...")
 
-            # Check pause
             if current_time < state['pause_until']:
                 rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
                 if rsi is not None and rsi > 50:
@@ -722,7 +715,6 @@ def main():
                     state['pause_until'] = 0
                     save_state()
 
-            # Fetch price with fallback
             price = fetch_current_price()
             if price is None:
                 price = state.get('last_price', state['price_history'][-1] if state['price_history'] else 142.0)
@@ -735,14 +727,12 @@ def main():
                 state['last_fetch_time'] = current_time
                 save_state()
 
-            # Wait for sufficient price data before calculating indicators
-            if len(state['price_history']) < 34:  # Minimum for MACD
+            if len(state['price_history']) < 34:
                 log(f"Waiting for price data: {len(state['price_history'])}/34 prices collected")
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            # Update indicators every 60 seconds
-            if current_time - last_indicator_time >= 60:
+            if current_time - last_indicator_time >= 60 or any(x is None for x in [cached_rsi, cached_macd_line, cached_signal_line, cached_vwap, cached_upper_bb, cached_lower_bb, cached_atr, cached_momentum, cached_avg_atr]):
                 rsi = calculate_rsi(state['price_history'])
                 macd_line, signal_line = calculate_macd(state['price_history'])
                 vwap = calculate_vwap(state['price_history'])
@@ -765,7 +755,11 @@ def main():
                 vwap, upper_bb, lower_bb = cached_vwap, cached_upper_bb, cached_lower_bb
                 atr, momentum, avg_atr = cached_atr, cached_momentum, cached_avg_atr
 
-            # Adjust TRADE_INTERVAL and cooldown
+            if any(x is None for x in [rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr]):
+                log("Indicators not ready or invalid, skipping trade logic")
+                time.sleep(TRADE_INTERVAL)
+                continue
+
             cooldown_duration = 1800
             if atr is not None and avg_atr is not None and avg_atr > 0:
                 TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
@@ -861,7 +855,7 @@ def main():
                         sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
                         hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 66)
                         for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
-                            if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
+                            if price >= target_price and (not hold_final or i < len(state['sell_targets'] - 1)):
                                 min_profit = 0.02 if portfolio_value < 100 else 1
                                 if (price - state['entry_price']) * amount > min_profit:
                                     execute_sell(amount, price)
@@ -869,8 +863,6 @@ def main():
                                     save_state()
                                     del state['sell_targets'][i]
                                     break
-            else:
-                log(f"Trade on cooldown until {time.strftime('%H:%M:%S', time.localtime(state['trade_cooldown_until']))}")
 
             if current_time - last_stats_time >= 4 * 3600:
                 log_performance(portfolio_value)
