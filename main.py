@@ -78,8 +78,6 @@ log("Initializing Solana client...")
 client = Client(RPC_URLS[0])
 log(f"Connected to RPC: {client._provider.endpoint_uri}")
 
-# State (line 84)
-# State (line 84)
 state = {
     'position': 0.0,
     'entry_price': 0.0,
@@ -87,8 +85,8 @@ state = {
     'highest_price': 0.0,
     'peak_portfolio': 0.0,
     'pause_until': 0,
-    'buy_pause_until': 0,  # Add this
-    'sell_pause_until': 0,  # Add this
+    'buy_pause_until': 0,
+    'sell_pause_until': 0,
     'price_history': [],
     'atr_history': [],
     'last_fetch_time': 0,
@@ -104,6 +102,9 @@ state = {
     'last_sol_balance': 0.0,
     'last_usdc_balance': 0.0,
     'last_balance_update': 0,
+    'trade_cooldown_until': 0,  # Add this
+    'peak_timestamp': 0,  # Add this
+    'version': "1.0",  # Add this
 }
 # Initialize Price History
 def initialize_price_history():
@@ -130,17 +131,17 @@ def initialize_price_history():
     # Fetch live prices
     prices = []
     attempts = 0
-    max_attempts = 5
+    max_attempts = 10
     while len(prices) < required_prices and attempts < max_attempts:
         price = fetch_current_price()
         if price:
             prices.append(price)
             log(f"Fetched price {len(prices)}/{required_prices}: ${price:.2f}")
-            time.sleep(0.5)  # Small delay to avoid rate limits
+            time.sleep(1)  # Increased delay to avoid rate limits
         else:
             attempts += 1
             log(f"Price fetch failed, attempt {attempts}/{max_attempts}")
-            time.sleep(2)
+            time.sleep(5)  # Longer delay on failure
 
     if len(prices) < required_prices:
         log(f"ERROR: Could not fetch enough prices, got {len(prices)}/{required_prices}")
@@ -156,7 +157,6 @@ def initialize_price_history():
         log("Saved price history to file")
     except Exception as e:
         log(f"Failed to save price history: {e}")
-
 # Helper Functions
 @sleep_and_retry
 @limits(calls=90, period=60)
@@ -659,13 +659,13 @@ def load_state():
 def main():
     global TRADE_INTERVAL
     log("Entering main loop...")
-    # Initialize state with peak timestamp and version
+    # Initialize state with peak timestamp and version if not present
     if 'peak_timestamp' not in state:
         state['peak_timestamp'] = time.time()
-        state['version'] = "1.0"
     if 'trade_cooldown_until' not in state:
         state['trade_cooldown_until'] = 0
-        save_state()
+    save_state()
+
     # Reset peak if older than 7 days (604800 seconds)
     if time.time() - state['peak_timestamp'] > 604800:
         log(f"Peak portfolio ${state['peak_portfolio']:.2f} is over 7 days old, resetting")
@@ -677,6 +677,7 @@ def main():
         state['peak_portfolio'] = portfolio_value
         state['peak_timestamp'] = time.time()
         save_state()
+
     # One-time reset for incorrect peak or pause
     if state['peak_portfolio'] > 24 or state['pause_until'] != 0:
         log(f"Resetting peak_portfolio from ${state['peak_portfolio']:.2f} to $23 and clearing pause")
@@ -684,8 +685,8 @@ def main():
         state['peak_timestamp'] = time.time()
         state['pause_until'] = 0
         save_state()
+
     last_stats_time = time.time()
-    # Cache for indicators
     last_indicator_time = 0
     cached_rsi = None
     cached_macd_line = None
@@ -696,12 +697,13 @@ def main():
     cached_atr = None
     cached_momentum = None
     cached_avg_atr = None
+
     while True:
         try:
             loop_start = time.time()
             current_time = time.time()
             log("Loop iteration...")
-            
+
             # Check pause
             if current_time < state['pause_until']:
                 rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
@@ -733,14 +735,20 @@ def main():
                 state['last_fetch_time'] = current_time
                 save_state()
 
+            # Wait for sufficient price data before calculating indicators
+            if len(state['price_history']) < 34:  # Minimum for MACD
+                log(f"Waiting for price data: {len(state['price_history'])}/34 prices collected")
+                time.sleep(TRADE_INTERVAL)
+                continue
+
             # Update indicators every 60 seconds
             if current_time - last_indicator_time >= 60:
-                rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
-                macd_line, signal_line = calculate_macd(state['price_history']) if len(state['price_history']) >= 34 else (None, None)
-                vwap = calculate_vwap(state['price_history']) if len(state['price_history']) >= 20 else None
-                upper_bb, lower_bb = calculate_bollinger_bands(state['price_history']) if len(state['price_history']) >= 20 else (None, None)
-                atr = calculate_atr(state['price_history']) if len(state['price_history']) >= 21 else 2.0
-                momentum = calculate_momentum(state['price_history']) if len(state['price_history']) >= 11 else None
+                rsi = calculate_rsi(state['price_history'])
+                macd_line, signal_line = calculate_macd(state['price_history'])
+                vwap = calculate_vwap(state['price_history'])
+                upper_bb, lower_bb = calculate_bollinger_bands(state['price_history'])
+                atr = calculate_atr(state['price_history'])
+                momentum = calculate_momentum(state['price_history'])
                 if atr is not None:
                     state['atr_history'].append(atr)
                     if len(state['atr_history']) > 50:
@@ -756,7 +764,7 @@ def main():
                 rsi, macd_line, signal_line = cached_rsi, cached_macd_line, cached_signal_line
                 vwap, upper_bb, lower_bb = cached_vwap, cached_upper_bb, cached_lower_bb
                 atr, momentum, avg_atr = cached_atr, cached_momentum, cached_avg_atr
-            
+
             # Adjust TRADE_INTERVAL and cooldown
             cooldown_duration = 1800
             if atr is not None and avg_atr is not None and avg_atr > 0:
@@ -771,14 +779,11 @@ def main():
                 log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s (default), Cooldown: {cooldown_duration//60} min")
 
             portfolio_value = get_portfolio_value(price) if price else 0.0
-            # Validate and update peak_portfolio
-            if portfolio_value > 0:  # Ensure we have a valid portfolio value
-                # If peak_portfolio is unset or deviates too much (e.g., >50% difference), reset it
-                if state['peak_portfolio'] == 0 or (state['peak_portfolio'] > 0 and abs(state['peak_portfolio'] - portfolio_value) / portfolio_value > 0.5):
+            if portfolio_value > 0:
+                if state['peak_portfolio'] == 0 or abs(state['peak_portfolio'] - portfolio_value) / portfolio_value > 0.5:
                     state['peak_portfolio'] = portfolio_value
                     state['peak_timestamp'] = current_time
                     log(f"Reset peak_portfolio to current value: ${portfolio_value:.2f}")
-                # Update peak if current portfolio is higher
                 elif portfolio_value > state['peak_portfolio']:
                     state['peak_portfolio'] = portfolio_value
                     state['peak_timestamp'] = current_time
@@ -786,7 +791,6 @@ def main():
             drawdown = (state['peak_portfolio'] - portfolio_value) / state['peak_portfolio'] * 100 if state['peak_portfolio'] > 0 else 0
             drawdown_usd = state['peak_portfolio'] - portfolio_value
             log(f"Portfolio: ${portfolio_value:.2f}, Drawdown: {drawdown:.2f}% (${drawdown_usd:.2f})")
-            # Dynamic pause threshold
             atr_adjust = atr * 2 if atr else 0
             pause_threshold = max(10, min(20, 10 + (portfolio_value * 0.0001) + atr_adjust))
             min_usd_loss = 5.0
