@@ -647,25 +647,35 @@ def main():
         state['trade_cooldown_until'] = 0
     save_state()
 
-    if time.time() - state['peak_timestamp'] > 604800:
+    # Validate and reset state on startup
+    current_time = time.time()
+    last_save_time = os.path.getmtime('state.json') if os.path.exists('state.json') else 0
+    if last_save_time > 0 and current_time - last_save_time > 48 * 3600:  # State older than 48 hours
+        log(f"State file older than 48 hours, resetting")
+    price = fetch_current_price()
+    if price:
+        portfolio_value = get_portfolio_value(price)
+        # Reset peak_portfolio to current value if invalid or outdated
+        if state.get('peak_portfolio', 0) == 0 or abs(state['peak_portfolio'] - portfolio_value) / portfolio_value > 0.5:
+            log(f"Resetting peak_portfolio from ${state.get('peak_portfolio', 0):.2f} to ${portfolio_value:.2f}")
+            state['peak_portfolio'] = portfolio_value
+            state['peak_timestamp'] = current_time
+        # Clear stale pause unless recently set
+        if state.get('pause_until', 0) > current_time and (current_time - state['peak_timestamp'] > 6 * 3600 or last_save_time == 0):
+            log(f"Clearing stale pause_until {state.get('pause_until', 0)} as it’s outdated")
+            state['pause_until'] = 0
+        save_state()
+
+    # Reset peak_portfolio if older than 7 days
+    if current_time - state['peak_timestamp'] > 604800:
         log(f"Peak portfolio ${state['peak_portfolio']:.2f} is over 7 days old, resetting")
-        price = fetch_current_price()
         if price is None:
             price = state.get('last_price', state['price_history'][-1] if state['price_history'] else None)
-        if price is None:
-            log("Cannot reset peak portfolio without a price")
-        else:
+        if price:
             portfolio_value = get_portfolio_value(price)
             state['peak_portfolio'] = portfolio_value
-            state['peak_timestamp'] = time.time()
+            state['peak_timestamp'] = current_time
             save_state()
-
-    if state['peak_portfolio'] > 24 or state['pause_until'] != 0:
-        log(f"Resetting peak_portfolio from ${state['peak_portfolio']:.2f} to $23 and clearing pause")
-        state['peak_portfolio'] = 23.0
-        state['peak_timestamp'] = time.time()
-        state['pause_until'] = 0
-        save_state()
 
     last_stats_time = time.time()
     last_indicator_time = 0
@@ -685,21 +695,37 @@ def main():
             current_time = time.time()
             log("Loop iteration...")
 
+            # Check for pause with a maximum duration fail-safe
+            max_pause_duration = 48 * 3600  # 48 hours max pause
             if current_time < state['pause_until']:
-                rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
-                if rsi is not None and rsi > 50:
-                    remaining_pause = state['pause_until'] - current_time
-                    if remaining_pause > 6 * 3600:
+                remaining_pause = state['pause_until'] - current_time
+                if state['pause_until'] - state['peak_timestamp'] > max_pause_duration:
+                    log(f"Pause exceeded max duration of 48 hours, resuming")
+                    state['pause_until'] = 0
+                    if price:
+                        portfolio_value = get_portfolio_value(price)
+                        state['peak_portfolio'] = portfolio_value
+                        state['peak_timestamp'] = current_time
+                        log(f"Reset peak_portfolio to ${portfolio_value:.2f} after long pause")
+                    save_state()
+                else:
+                    rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
+                    if rsi is not None and rsi > 50 and remaining_pause > 6 * 3600:
                         state['pause_until'] = current_time + 6 * 3600
                         log("RSI > 50, reducing pause to 6 hours")
                         save_state()
-                log(f"Paused until {time.strftime('%H:%M:%S', time.localtime(state['pause_until']))}")
-                time.sleep(TRADE_INTERVAL)
-                continue
+                    log(f"Paused until {time.strftime('%H:%M:%S', time.localtime(state['pause_until']))}")
+                    time.sleep(TRADE_INTERVAL)
+                    continue
             else:
                 if state['pause_until'] != 0:
                     log("Pause time passed, resuming trading")
                     state['pause_until'] = 0
+                    if price:
+                        portfolio_value = get_portfolio_value(price)
+                        state['peak_portfolio'] = portfolio_value
+                        state['peak_timestamp'] = current_time
+                        log(f"Reset peak_portfolio to ${portfolio_value:.2f} after pause ended")
                     save_state()
 
             price = fetch_current_price()
@@ -708,7 +734,7 @@ def main():
                     log("No price history available, cannot proceed without a price")
                     time.sleep(TRADE_INTERVAL)
                     continue
-                price = state['price_history'][-1]  # Use last price from history
+                price = state['price_history'][-1]
                 log(f"Price fetch failed, using last known price from history: ${price:.2f}")
             state['last_price'] = price
             state['price_history'].append(price)
@@ -717,7 +743,7 @@ def main():
             state['last_fetch_time'] = current_time
             save_state()
 
-            # Save price history to file (moved from fetch_current_price)
+            # Save price history to file
             try:
                 with open('price_history.json', 'w') as f:
                     json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
@@ -785,11 +811,13 @@ def main():
             log(f"Portfolio: ${portfolio_value:.2f}, Drawdown: {drawdown:.2f}% (${drawdown_usd:.2f})")
             atr_adjust = atr * 2 if atr else 0
             pause_threshold = max(10, min(20, 10 + (portfolio_value * 0.0001) + atr_adjust))
-            min_usd_loss = 5.0  # Kept at original value as requested
+            min_usd_loss = 5.0
+            log(f"Pause check: drawdown={drawdown:.2f}%, pause_threshold={pause_threshold:.2f}%, drawdown_usd=${drawdown_usd:.2f}, min_usd_loss=${min_usd_loss:.2f}")
             if drawdown > pause_threshold and drawdown_usd >= min_usd_loss:
                 pause_duration = 6 * 3600 if rsi and rsi > 50 else 48 * 3600
                 state['pause_until'] = current_time + pause_duration
-                log(f"Drawdown >{pause_threshold:.2f}% and loss ${drawdown_usd:.2f}, pausing for {pause_duration/3600} hours")
+                state['peak_timestamp'] = current_time
+                log(f"Pausing due to drawdown: {drawdown:.2f}% > {pause_threshold:.2f}% and loss ${drawdown_usd:.2f} >= ${min_usd_loss:.2f}, pausing for {pause_duration/3600} hours")
                 save_state()
                 continue
 
