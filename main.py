@@ -526,7 +526,7 @@ def send_trade(route, current_price):
         result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
         tx_id = result.value
         log(f"Trade sent: tx_id={tx_id}")
-        time.sleep(5)
+        time.sleep(10)  # Increased from 5 to 10 seconds for network sync
         in_amount = int(route['inAmount'])
         out_amount = int(route['outAmount'])
         return tx_id, in_amount, out_amount
@@ -640,6 +640,7 @@ def load_state():
                 state.update(json.load(f))
     except Exception as e:
         log(f"Failed to load state: {e}")
+
 
 def main():
     global TRADE_INTERVAL
@@ -815,7 +816,7 @@ def main():
             else:
                 log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s (default), Cooldown: {cooldown_duration//60} min")
 
-            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price)
+            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
             if portfolio_value is None:
                 log("Skipping iteration due to portfolio fetch failure")
                 time.sleep(TRADE_INTERVAL)
@@ -891,8 +892,8 @@ def main():
                             old_usdc_balance = usdc_balance
                             cost = position_size * price * (1 + 0.002)  # Include fee
                             execute_buy(position_size)
-                            time.sleep(5)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=5)
+                            time.sleep(10)  # Wait for network sync
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
                             if portfolio_value_after is None:
                                 log("Trade failed: Unable to fetch portfolio after buy, skipping update")
                                 time.sleep(TRADE_INTERVAL)
@@ -929,8 +930,8 @@ def main():
                             old_sol_balance = sol_balance
                             old_usdc_balance = usdc_balance
                             execute_sell(amount_to_sell, price)
-                            time.sleep(5)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=5)
+                            time.sleep(10)  # Wait for network sync
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
                             if portfolio_value_after is None:
                                 log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                 time.sleep(TRADE_INTERVAL)
@@ -960,8 +961,8 @@ def main():
                         old_sol_balance = sol_balance
                         old_usdc_balance = usdc_balance
                         execute_sell(state['position'], price)
-                        time.sleep(5)  # Wait for network sync
-                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=5)
+                        time.sleep(10)  # Wait for network sync
+                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
                         if portfolio_value_after is None:
                             log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                             time.sleep(TRADE_INTERVAL)
@@ -992,8 +993,8 @@ def main():
                             old_sol_balance = sol_balance
                             old_usdc_balance = usdc_balance
                             execute_sell(state['position'], price)
-                            time.sleep(5)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=5)
+                            time.sleep(10)  # Wait for network sync
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
                             if portfolio_value_after is None:
                                 log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                 time.sleep(TRADE_INTERVAL)
@@ -1022,8 +1023,8 @@ def main():
                             old_sol_balance = sol_balance
                             old_usdc_balance = usdc_balance
                             execute_sell(state['position'], price)
-                            time.sleep(5)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=5)
+                            time.sleep(10)  # Wait for network sync
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
                             if portfolio_value_after is None:
                                 log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                 time.sleep(TRADE_INTERVAL)
@@ -1057,8 +1058,8 @@ def main():
                                     old_sol_balance = sol_balance
                                     old_usdc_balance = usdc_balance
                                     execute_sell(amount, price)
-                                    time.sleep(5)  # Wait for network sync
-                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=5)
+                                    time.sleep(10)  # Wait for network sync
+                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
                                     if portfolio_value_after is None:
                                         log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                         time.sleep(TRADE_INTERVAL)
