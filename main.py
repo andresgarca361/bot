@@ -1052,14 +1052,14 @@ def main():
                         sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
                         hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 66)
                         for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
-                            if price >= target_price and (not hold_final or i < len(state['sell_targets'] - 1)):
+                            if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
                                 min_profit = 0.02 if portfolio_value < 100 else 1
                                 if (price - state['entry_price']) * amount > min_profit:
                                     old_sol_balance = sol_balance
                                     old_usdc_balance = usdc_balance
                                     execute_sell(amount, price)
                                     time.sleep(10)  # Wait for network sync
-                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
+                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                                     if portfolio_value_after is None:
                                         log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                         time.sleep(TRADE_INTERVAL)
