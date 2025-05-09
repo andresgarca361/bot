@@ -364,7 +364,7 @@ def adjust_triggers(atr, avg_atr, rsi):
         BASE_BUY_TRIGGER = min(2.5, BASE_BUY_TRIGGER + 0.7)
         BASE_SELL_TRIGGER = min(4.0, BASE_SELL_TRIGGER + 0.7)
         log(f"High ATR, triggers: buy={BASE_BUY_TRIGGER}%, sell={BASE_SELL_TRIGGER}%")
-    if rsi is not None and (rsi < 25 or rsi > 66):
+    if rsi is not None and (rsi < 25 or rsi > 70):  # Changed from 66 to 70
         BASE_BUY_TRIGGER = max(1.5, BASE_BUY_TRIGGER - 0.5)
         BASE_SELL_TRIGGER = max(2.5, BASE_SELL_TRIGGER - 0.5)
         log(f"Extreme RSI, triggers: buy={BASE_BUY_TRIGGER}%, sell={BASE_SELL_TRIGGER}%")
@@ -816,7 +816,7 @@ def main():
             else:
                 log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s (default), Cooldown: {cooldown_duration//60} min")
 
-            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
+            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=10)
             if portfolio_value is None:
                 log("Skipping iteration due to portfolio fetch failure")
                 time.sleep(TRADE_INTERVAL)
@@ -893,7 +893,7 @@ def main():
                             cost = position_size * price * (1 + 0.002)  # Include fee
                             execute_buy(position_size)
                             time.sleep(10)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                             if portfolio_value_after is None:
                                 log("Trade failed: Unable to fetch portfolio after buy, skipping update")
                                 time.sleep(TRADE_INTERVAL)
@@ -921,7 +921,7 @@ def main():
 
             if current_time >= state['trade_cooldown_until']:
                 if total_sol_balance > MIN_SOL_THRESHOLD and price:
-                    if rsi is not None and rsi > 66:
+                    if rsi is not None and rsi > 70:  # Changed from 66 to 70
                         amount_to_sell = min(total_sol_balance - MIN_SOL_THRESHOLD, total_sol_balance * 0.1)
                         if amount_to_sell > 0:
                             log("Selling due to overbought RSI")
@@ -931,7 +931,7 @@ def main():
                             old_usdc_balance = usdc_balance
                             execute_sell(amount_to_sell, price)
                             time.sleep(10)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                             if portfolio_value_after is None:
                                 log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                 time.sleep(TRADE_INTERVAL)
@@ -962,7 +962,7 @@ def main():
                         old_usdc_balance = usdc_balance
                         execute_sell(state['position'], price)
                         time.sleep(10)  # Wait for network sync
-                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
+                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                         if portfolio_value_after is None:
                             log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                             time.sleep(TRADE_INTERVAL)
@@ -988,13 +988,13 @@ def main():
                         save_state()
                     elif price >= state['entry_price'] * 1.035:
                         state['highest_price'] = max(state['highest_price'], price)
-                        if rsi is not None and rsi > 66:
+                        if rsi is not None and rsi > 70:  # Changed from 66 to 70
                             log("RSI overbought, selling")
                             old_sol_balance = sol_balance
                             old_usdc_balance = usdc_balance
                             execute_sell(state['position'], price)
                             time.sleep(10)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                             if portfolio_value_after is None:
                                 log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                 time.sleep(TRADE_INTERVAL)
@@ -1024,7 +1024,7 @@ def main():
                             old_usdc_balance = usdc_balance
                             execute_sell(state['position'], price)
                             time.sleep(10)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)  # Increased wait_time to 10
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                             if portfolio_value_after is None:
                                 log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                 time.sleep(TRADE_INTERVAL)
@@ -1050,7 +1050,7 @@ def main():
                             save_state()
                     else:
                         sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
-                        hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 66)
+                        hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 70)  # Changed from 66 to 70
                         for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
                             if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
                                 min_profit = 0.02 if portfolio_value < 100 else 1
