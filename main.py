@@ -385,7 +385,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
     if not spread_condition:
         log(f"Bid-ask spread too high ({bid_ask_spread*100:.2f}%), skipping buy")
         return False
-    multiplier = 1.2 if signal_line < 0 else 0.8
+    multiplier = 1.1 if signal_line < 0 else 0.9
     if rsi >= 35 or macd_line <= signal_line * multiplier:
         log(f"Core conditions failed: RSI={rsi:.2f}, MACD={macd_line:.4f}<={signal_line:.4f}")
         return False
