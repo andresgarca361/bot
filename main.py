@@ -921,10 +921,12 @@ def main():
 
             if current_time >= state['trade_cooldown_until']:
                 if total_sol_balance > MIN_SOL_THRESHOLD and price:
-                    if rsi is not None and rsi > 70:  # Changed from 66 to 70
+                    multiplier = 1.1 if macd_line < 0 else 0.9
+                    if (rsi is not None and rsi > 70) or \
+                       (macd_line is not None and signal_line is not None and macd_line < signal_line * multiplier and signal_line < 0):
                         amount_to_sell = min(total_sol_balance - MIN_SOL_THRESHOLD, total_sol_balance * 0.1)
                         if amount_to_sell > 0:
-                            log("Selling due to overbought RSI")
+                            log(f"Selling due to RSI > 70 or bearish MACD ({macd_line:.4f} < {signal_line:.4f} * {multiplier})")
                             if state['position'] == 0:
                                 state['entry_price'] = price
                             old_sol_balance = sol_balance
@@ -953,43 +955,11 @@ def main():
                             state['peak_portfolio'] = new_portfolio_value
                             state['peak_market_value'] = new_portfolio_value
                             state['peak_timestamp'] = current_time
-                            log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after RSI sell")
+                            log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after RSI or MACD sell")
                             save_state()
-                elif state['position'] > 0 and price:
-                    if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
-                        log("Hit stop-loss, selling")
-                        old_sol_balance = sol_balance
-                        old_usdc_balance = usdc_balance
-                        execute_sell(state['position'], price)
-                        time.sleep(10)  # Wait for network sync
-                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                        if portfolio_value_after is None:
-                            log("Trade failed: Unable to fetch portfolio after sell, skipping update")
-                            time.sleep(TRADE_INTERVAL)
-                            continue
-                        if sol_balance_after is not None and usdc_balance_after is not None:
-                            expected_sol = old_sol_balance - state['position']
-                            expected_usdc = old_usdc_balance + (state['position'] * price * (1 - 0.002))
-                            if abs(sol_balance_after - expected_sol) > 0.0001 or abs(usdc_balance_after - expected_usdc) > 0.1:
-                                log(f"Trade mismatch: Expected SOL {expected_sol:.4f}, got {sol_balance_after:.4f}; Expected USDC {expected_usdc:.2f}, got {usdc_balance_after:.2f}")
-                                log("Skipping trade update due to mismatch")
-                                time.sleep(TRADE_INTERVAL)
-                                continue
-                        state['trade_cooldown_until'] = current_time + cooldown_duration
-                        last_sol_balance = sol_balance_after
-                        last_usdc_balance = usdc_balance_after
-                        state['last_sol_balance'] = sol_balance_after
-                        state['last_usdc_balance'] = usdc_balance_after
-                        new_portfolio_value = get_portfolio_value(price)
-                        state['peak_portfolio'] = new_portfolio_value
-                        state['peak_market_value'] = new_portfolio_value
-                        state['peak_timestamp'] = current_time
-                        log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after stop-loss")
-                        save_state()
-                    elif price >= state['entry_price'] * 1.035:
-                        state['highest_price'] = max(state['highest_price'], price)
-                        if rsi is not None and rsi > 70:  # Changed from 66 to 70
-                            log("RSI overbought, selling")
+                    elif state['position'] > 0 and price:
+                        if price <= state['entry_price'] * (1 - STOP_LOSS_DROP / 100):
+                            log("Hit stop-loss, selling")
                             old_sol_balance = sol_balance
                             old_usdc_balance = usdc_balance
                             execute_sell(state['position'], price)
@@ -1016,75 +986,107 @@ def main():
                             state['peak_portfolio'] = new_portfolio_value
                             state['peak_market_value'] = new_portfolio_value
                             state['peak_timestamp'] = current_time
-                            log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after RSI sell")
+                            log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after stop-loss")
                             save_state()
-                        elif price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
-                            log("Hit trailing stop, selling")
-                            old_sol_balance = sol_balance
-                            old_usdc_balance = usdc_balance
-                            execute_sell(state['position'], price)
-                            time.sleep(10)  # Wait for network sync
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                            if portfolio_value_after is None:
-                                log("Trade failed: Unable to fetch portfolio after sell, skipping update")
-                                time.sleep(TRADE_INTERVAL)
-                                continue
-                            if sol_balance_after is not None and usdc_balance_after is not None:
-                                expected_sol = old_sol_balance - state['position']
-                                expected_usdc = old_usdc_balance + (state['position'] * price * (1 - 0.002))
-                                if abs(sol_balance_after - expected_sol) > 0.0001 or abs(usdc_balance_after - expected_usdc) > 0.1:
-                                    log(f"Trade mismatch: Expected SOL {expected_sol:.4f}, got {sol_balance_after:.4f}; Expected USDC {expected_usdc:.2f}, got {usdc_balance_after:.2f}")
-                                    log("Skipping trade update due to mismatch")
+                        elif price >= state['entry_price'] * 1.035:
+                            state['highest_price'] = max(state['highest_price'], price)
+                            if rsi is not None and rsi > 70:
+                                log("RSI overbought, selling")
+                                old_sol_balance = sol_balance
+                                old_usdc_balance = usdc_balance
+                                execute_sell(state['position'], price)
+                                time.sleep(10)  # Wait for network sync
+                                portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
+                                if portfolio_value_after is None:
+                                    log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                     time.sleep(TRADE_INTERVAL)
                                     continue
-                            state['trade_cooldown_until'] = current_time + cooldown_duration
-                            last_sol_balance = sol_balance_after
-                            last_usdc_balance = usdc_balance_after
-                            state['last_sol_balance'] = sol_balance_after
-                            state['last_usdc_balance'] = usdc_balance_after
-                            new_portfolio_value = get_portfolio_value(price)
-                            state['peak_portfolio'] = new_portfolio_value
-                            state['peak_market_value'] = new_portfolio_value
-                            state['peak_timestamp'] = current_time
-                            log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after trailing stop")
-                            save_state()
-                    else:
-                        sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
-                        hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 70)  # Changed from 66 to 70
-                        for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
-                            if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
-                                min_profit = 0.02 if portfolio_value < 100 else 1
-                                if (price - state['entry_price']) * amount > min_profit:
-                                    old_sol_balance = sol_balance
-                                    old_usdc_balance = usdc_balance
-                                    execute_sell(amount, price)
-                                    time.sleep(10)  # Wait for network sync
-                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                                    if portfolio_value_after is None:
-                                        log("Trade failed: Unable to fetch portfolio after sell, skipping update")
+                                if sol_balance_after is not None and usdc_balance_after is not None:
+                                    expected_sol = old_sol_balance - state['position']
+                                    expected_usdc = old_usdc_balance + (state['position'] * price * (1 - 0.002))
+                                    if abs(sol_balance_after - expected_sol) > 0.0001 or abs(usdc_balance_after - expected_usdc) > 0.1:
+                                        log(f"Trade mismatch: Expected SOL {expected_sol:.4f}, got {sol_balance_after:.4f}; Expected USDC {expected_usdc:.2f}, got {usdc_balance_after:.2f}")
+                                        log("Skipping trade update due to mismatch")
                                         time.sleep(TRADE_INTERVAL)
                                         continue
-                                    if sol_balance_after is not None and usdc_balance_after is not None:
-                                        expected_sol = old_sol_balance - amount
-                                        expected_usdc = old_usdc_balance + (amount * price * (1 - 0.002))
-                                        if abs(sol_balance_after - expected_sol) > 0.0001 or abs(usdc_balance_after - expected_usdc) > 0.1:
-                                            log(f"Trade mismatch: Expected SOL {expected_sol:.4f}, got {sol_balance_after:.4f}; Expected USDC {expected_usdc:.2f}, got {usdc_balance_after:.2f}")
-                                            log("Skipping trade update due to mismatch")
+                                state['trade_cooldown_until'] = current_time + cooldown_duration
+                                last_sol_balance = sol_balance_after
+                                last_usdc_balance = usdc_balance_after
+                                state['last_sol_balance'] = sol_balance_after
+                                state['last_usdc_balance'] = usdc_balance_after
+                                new_portfolio_value = get_portfolio_value(price)
+                                state['peak_portfolio'] = new_portfolio_value
+                                state['peak_market_value'] = new_portfolio_value
+                                state['peak_timestamp'] = current_time
+                                log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after RSI sell")
+                                save_state()
+                            elif price <= state['highest_price'] * (1 - TRAILING_STOP / 100):
+                                log("Hit trailing stop, selling")
+                                old_sol_balance = sol_balance
+                                old_usdc_balance = usdc_balance
+                                execute_sell(state['position'], price)
+                                time.sleep(10)  # Wait for network sync
+                                portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
+                                if portfolio_value_after is None:
+                                    log("Trade failed: Unable to fetch portfolio after sell, skipping update")
+                                    time.sleep(TRADE_INTERVAL)
+                                    continue
+                                if sol_balance_after is not None and usdc_balance_after is not None:
+                                    expected_sol = old_sol_balance - state['position']
+                                    expected_usdc = old_usdc_balance + (state['position'] * price * (1 - 0.002))
+                                    if abs(sol_balance_after - expected_sol) > 0.0001 or abs(usdc_balance_after - expected_usdc) > 0.1:
+                                        log(f"Trade mismatch: Expected SOL {expected_sol:.4f}, got {sol_balance_after:.4f}; Expected USDC {expected_usdc:.2f}, got {usdc_balance_after:.2f}")
+                                        log("Skipping trade update due to mismatch")
+                                        time.sleep(TRADE_INTERVAL)
+                                        continue
+                                state['trade_cooldown_until'] = current_time + cooldown_duration
+                                last_sol_balance = sol_balance_after
+                                last_usdc_balance = usdc_balance_after
+                                state['last_sol_balance'] = sol_balance_after
+                                state['last_usdc_balance'] = usdc_balance_after
+                                new_portfolio_value = get_portfolio_value(price)
+                                state['peak_portfolio'] = new_portfolio_value
+                                state['peak_market_value'] = new_portfolio_value
+                                state['peak_timestamp'] = current_time
+                                log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after trailing stop")
+                                save_state()
+                        else:
+                            sma_slope = (vwap - calculate_vwap(state['price_history'][:-1])) / vwap * 100 if vwap and len(state['price_history']) > 1 else 0
+                            hold_final = sma_slope > 0.7 and macd_line is not None and signal_line is not None and macd_line > signal_line and (rsi is not None and rsi <= 70)
+                            for i, (amount, target_price) in enumerate(state['sell_targets'][:]):
+                                if price >= target_price and (not hold_final or i < len(state['sell_targets']) - 1):
+                                    min_profit = 0.02 if portfolio_value < 100 else 1
+                                    if (price - state['entry_price']) * amount > min_profit:
+                                        old_sol_balance = sol_balance
+                                        old_usdc_balance = usdc_balance
+                                        execute_sell(amount, price)
+                                        time.sleep(10)  # Wait for network sync
+                                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
+                                        if portfolio_value_after is None:
+                                            log("Trade failed: Unable to fetch portfolio after sell, skipping update")
                                             time.sleep(TRADE_INTERVAL)
                                             continue
-                                    state['trade_cooldown_until'] = current_time + cooldown_duration
-                                    last_sol_balance = sol_balance_after
-                                    last_usdc_balance = usdc_balance_after
-                                    state['last_sol_balance'] = sol_balance_after
-                                    state['last_usdc_balance'] = usdc_balance_after
-                                    new_portfolio_value = get_portfolio_value(price)
-                                    state['peak_portfolio'] = new_portfolio_value
-                                    state['peak_market_value'] = new_portfolio_value
-                                    state['peak_timestamp'] = current_time
-                                    log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after target sell")
-                                    save_state()
-                                    del state['sell_targets'][i]
-                                    break
+                                        if sol_balance_after is not None and usdc_balance_after is not None:
+                                            expected_sol = old_sol_balance - amount
+                                            expected_usdc = old_usdc_balance + (amount * price * (1 - 0.002))
+                                            if abs(sol_balance_after - expected_sol) > 0.0001 or abs(usdc_balance_after - expected_usdc) > 0.1:
+                                                log(f"Trade mismatch: Expected SOL {expected_sol:.4f}, got {sol_balance_after:.4f}; Expected USDC {expected_usdc:.2f}, got {usdc_balance_after:.2f}")
+                                                log("Skipping trade update due to mismatch")
+                                                time.sleep(TRADE_INTERVAL)
+                                                continue
+                                        state['trade_cooldown_until'] = current_time + cooldown_duration
+                                        last_sol_balance = sol_balance_after
+                                        last_usdc_balance = usdc_balance_after
+                                        state['last_sol_balance'] = sol_balance_after
+                                        state['last_usdc_balance'] = usdc_balance_after
+                                        new_portfolio_value = get_portfolio_value(price)
+                                        state['peak_portfolio'] = new_portfolio_value
+                                        state['peak_market_value'] = new_portfolio_value
+                                        state['peak_timestamp'] = current_time
+                                        log(f"Reset peak_portfolio and peak_market_value to ${new_portfolio_value:.2f} after target sell")
+                                        save_state()
+                                        del state['sell_targets'][i]
+                                        break
 
             if current_time - last_stats_time >= 4 * 3600:
                 log_performance(portfolio_value)
