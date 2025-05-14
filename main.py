@@ -258,19 +258,19 @@ def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
         log("Not enough prices for RSI")
         return None
-    if len(set(prices[-period-1:])) < 2:  # Check for price variation
+    if len(set(prices[-period-1:])) < 2:
         log("Price history has insufficient variation for RSI")
         return None
-    relevant_prices = prices[-(period + 1):]
-    changes = np.diff(relevant_prices)
+    changes = np.diff(prices)
     gains = np.where(changes > 0, changes, 0)
     losses = np.where(changes < 0, -changes, 0)
-    avg_gain = gains.mean()
-    avg_loss = losses.mean()
-    for i in range(1, len(gains)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-    if avg_loss < 0.0001:
+    k = 2 / (period + 1)  # EMA constant
+    avg_gain = np.mean(gains[:period])
+    avg_loss = np.mean(losses[:period])
+    for i in range(period, len(gains)):
+        avg_gain = (gains[i] * k) + (avg_gain * (1 - k))
+        avg_loss = (losses[i] * k) + (avg_loss * (1 - k))
+    if avg_loss < 0.0001:  # Prevent division by zero
         avg_loss = 0.0001
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
