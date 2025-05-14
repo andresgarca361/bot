@@ -255,20 +255,20 @@ def get_fee_estimate():
 
 # Indicator Functions
 def get_current_rsi():
-    required_prices = 14  # For 1-minute RSI
+    required_prices = 20  # Updated to match new period
 
     # Check if we have enough prices in state['price_history']
-    if len(state['price_history']) >= required_prices + 1:  # Need 15 prices for 14-period RSI
+    if len(state['price_history']) >= required_prices + 1:  # Need 21 prices for 20-period RSI
         log(f"Using existing price history with {len(state['price_history'])} prices")
-        rsi = calculate_rsi(state['price_history'][- (required_prices + 1):])  # Slice last 15 prices
+        rsi = calculate_rsi(state['price_history'][- (required_prices + 1):])  # Slice last 21 prices
         log(f"Current RSI calculated: {rsi:.2f}")
         return rsi
 
-    # Collect 14 minutes of price data (but ensure we get at least 15 prices)
-    log("Not enough price history, starting to collect 15 minutes of price data for RSI...")
+    # Collect 20 minutes of price data (but ensure we get at least 21 prices)
+    log("Not enough price history, starting to collect 21 minutes of price data for RSI...")
     prices = []
     start_time = time.time()
-    target_end_time = start_time + ((required_prices + 1) * 60)  # Collect 15 prices
+    target_end_time = start_time + ((required_prices + 1) * 60)  # Collect 21 prices
 
     while len(prices) < required_prices + 1 and time.time() < target_end_time:
         price = fetch_current_price()
@@ -289,12 +289,12 @@ def get_current_rsi():
         log(f"ERROR: Only collected {len(prices)} prices, need {required_prices + 1}")
         return None
 
-    state['price_history'] = prices[-(required_prices + 1):]  # Keep the last 15 prices
+    state['price_history'] = prices[-(required_prices + 1):]  # Keep the last 21 prices
     rsi = calculate_rsi(state['price_history'])
     log(f"Current RSI calculated: {rsi:.2f}")
     return rsi
 
-def calculate_rsi(prices, period=14):
+def calculate_rsi(prices, period=20):  # Increased from 14 to 20
     if len(prices) < period + 1:
         log("Not enough prices for RSI calculation")
         return None
@@ -304,11 +304,11 @@ def calculate_rsi(prices, period=14):
     gains = np.where(deltas > 0, deltas, 0)
     losses = np.where(deltas < 0, -deltas, 0)
 
-    # Initial 14-period SMA for gains and losses
+    # Initial 20-period SMA for gains and losses
     avg_gain = np.mean(gains[:period]) if period <= len(gains) else 0
     avg_loss = np.mean(losses[:period]) if period <= len(losses) else 0
 
-    # Wilder’s smoothing (1/14 factor) for remaining periods
+    # Wilder’s smoothing (1/20 factor) for remaining periods
     for i in range(period, len(gains)):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
