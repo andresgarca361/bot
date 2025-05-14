@@ -63,7 +63,7 @@ except Exception as e:
 
 USDC_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
 SOL_MINT = Pubkey.from_string("So11111111111111111111111111111111111111112")
-TRADE_INTERVAL = 30  # Adjusted dynamically
+TRADE_INTERVAL = 60  # Adjusted dynamically
 BASE_BUY_TRIGGER = 2.0  # %, adjusted dynamically
 BASE_SELL_TRIGGER = 3.0  # %, adjusted dynamically
 STOP_LOSS_DROP = 5.0  # %
@@ -140,11 +140,11 @@ def initialize_price_history():
         if price:
             prices.append(price)
             log(f"Fetched price {len(prices)}/{required_prices}: ${price:.2f}")
-            time.sleep(5)  # Increased delay to avoid rate limits
+            time.sleep(60)  # Increased delay to avoid rate limits
         else:
             attempts += 1
             log(f"Price fetch failed, attempt {attempts}/{max_attempts}")
-            time.sleep(5)  # Longer delay on failure
+            time.sleep(60)  # Longer delay on failure
 
     if len(prices) < required_prices:
         log(f"ERROR: Could not fetch enough prices, got {len(prices)}/{required_prices}")
