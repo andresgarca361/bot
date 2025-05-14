@@ -249,30 +249,66 @@ def get_fee_estimate():
         log(f"Fee fetch error: {e}")
     return state['cached_fee']
 
-# Indicator Functions
-# Add to state initialization (line 84)
 
+def get_current_rsi():
+    log("Starting to collect 34 minutes of price data for RSI...")
+    required_prices = 34
+    prices = []
+    start_time = time.time()
+    target_end_time = start_time + (required_prices * 60)
+
+    while len(prices) < required_prices and time.time() < target_end_time:
+        price = fetch_current_price()
+        if price:
+            prices.append(price)
+            log(f"Fetched price {len(prices)}/{required_prices}: ${price:.2f} at {time.strftime('%H:%M:%S', time.localtime())}")
+            time.sleep(60)  # Wait 1 minute between fetches
+        else:
+            log("Price fetch failed, retrying in 5 seconds...")
+            time.sleep(5)
+            price = fetch_current_price()
+            if price:
+                prices.append(price)
+                log(f"Retry fetched price {len(prices)}/{required_prices}: ${price:.2f}")
+                time.sleep(60)
+
+    if len(prices) < required_prices:
+        log(f"ERROR: Only collected {len(prices)} prices, need {required_prices}")
+        return None
+
+    state['price_history'] = prices[-required_prices:]  # Keep the last 34 prices
+    rsi = calculate_rsi(state['price_history'])
+    log(f"Current RSI calculated: {rsi:.2f}")
+    return rsi
 
 # Update calculate_rsi (line 248)
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
-        log("Not enough prices for RSI")
+        log("Not enough prices for RSI calculation")
         return None
-    if len(set(prices[-period-1:])) < 2:
-        log("Price history has insufficient variation for RSI")
-        return None
-    changes = np.diff(prices)
-    gains = np.where(changes > 0, changes, 0)
-    losses = np.where(changes < 0, -changes, 0)
-    k = 2 / (period + 1)  # EMA constant
+
+    prices = np.array(prices)
+    deltas = np.diff(prices)  # Price changes
+    gains = np.where(deltas > 0, deltas, 0)  # Positive changes
+    losses = np.where(deltas < 0, -deltas, 0)  # Negative changes (absolute)
+
+    # Calculate initial average gain and loss (simple moving average for the first 'period')
     avg_gain = np.mean(gains[:period])
     avg_loss = np.mean(losses[:period])
+
+    # Use RMA (Running Moving Average) for the remaining calculations
+    rma_gain = avg_gain
+    rma_loss = avg_loss
+
     for i in range(period, len(gains)):
-        avg_gain = (gains[i] * k) + (avg_gain * (1 - k))
-        avg_loss = (losses[i] * k) + (avg_loss * (1 - k))
-    if avg_loss < 0.0001:  # Prevent division by zero
-        avg_loss = 0.0001
-    rs = avg_gain / avg_loss
+        rma_gain = (rma_gain * (period - 1) + gains[i]) / period  # RMA for gains
+        rma_loss = (rma_loss * (period - 1) + losses[i]) / period  # RMA for losses
+
+    # Prevent division by zero
+    if rma_loss < 0.0001:
+        rma_loss = 0.0001
+
+    rs = rma_gain / rma_loss
     rsi = 100 - (100 / (1 + rs))
     log(f"RSI: {rsi:.2f}")
     return rsi
