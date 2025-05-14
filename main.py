@@ -255,8 +255,18 @@ def get_fee_estimate():
 
 # Indicator Functions
 def get_current_rsi():
-    log("Starting to collect 34 minutes of price data for RSI...")
+    log("Calculating current RSI...")
     required_prices = 34
+
+    # Check if we already have enough recent prices in state['price_history']
+    if len(state['price_history']) >= required_prices:
+        log(f"Using existing price history with {len(state['price_history'])} prices")
+        rsi = calculate_rsi(state['price_history'][-required_prices:])
+        log(f"Current RSI calculated: {rsi:.2f}")
+        return rsi
+
+    # If not enough data, collect 34 minutes of price data
+    log("Not enough price history, starting to collect 34 minutes of price data for RSI...")
     prices = []
     start_time = time.time()
     target_end_time = start_time + (required_prices * 60)
