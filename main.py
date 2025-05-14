@@ -922,7 +922,7 @@ def main():
             if current_time >= state['trade_cooldown_until']:
                 if total_sol_balance > MIN_SOL_THRESHOLD and price:
                     multiplier = 1.1 if macd_line < 0 else 0.9
-                    if (rsi is not None and rsi > 70) or \
+                    if (rsi is not None and rsi > 70) and \
                        (macd_line is not None and signal_line is not None and macd_line < signal_line * multiplier and signal_line < 0):
                         amount_to_sell = min(total_sol_balance - MIN_SOL_THRESHOLD, total_sol_balance * 0.1)
                         if amount_to_sell > 0:
