@@ -256,7 +256,7 @@ def get_fee_estimate():
 # Indicator Functions
 def get_current_rsi():
     log("Calculating current RSI...")
-    required_prices = 34
+    required_prices = 14  # Changed from 34 to 14 for 1-minute RSI
 
     # Check if we already have enough recent prices in state['price_history']
     if len(state['price_history']) >= required_prices:
@@ -265,8 +265,8 @@ def get_current_rsi():
         log(f"Current RSI calculated: {rsi:.2f}")
         return rsi
 
-    # If not enough data, collect 34 minutes of price data
-    log("Not enough price history, starting to collect 34 minutes of price data for RSI...")
+    # If not enough data, collect 14 minutes of price data
+    log("Not enough price history, starting to collect 14 minutes of price data for RSI...")
     prices = []
     start_time = time.time()
     target_end_time = start_time + (required_prices * 60)
@@ -290,7 +290,7 @@ def get_current_rsi():
         log(f"ERROR: Only collected {len(prices)} prices, need {required_prices}")
         return None
 
-    state['price_history'] = prices[-required_prices:]  # Keep the last 34 prices
+    state['price_history'] = prices[-required_prices:]  # Keep the last 14 prices
     rsi = calculate_rsi(state['price_history'])
     log(f"Current RSI calculated: {rsi:.2f}")
     return rsi
@@ -852,12 +852,12 @@ def main():
 
             cooldown_duration = 1800
             if atr is not None and avg_atr is not None and avg_atr > 0:
-                TRADE_INTERVAL = max(5, min(45, 30 * (avg_atr / atr)))
+                TRADE_INTERVAL = max(5, min(45, 60 * (avg_atr / atr)))  # Adjusted to respect TRADE_INTERVAL = 60 as base
                 if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 66)):
                     TRADE_INTERVAL = 4
                     cooldown_duration = 900
                 elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
-                    TRADE_INTERVAL = 45
+                    TRADE_INTERVAL = 60
                 log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s, Cooldown: {cooldown_duration//60} min")
             else:
                 log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s (default), Cooldown: {cooldown_duration//60} min")
