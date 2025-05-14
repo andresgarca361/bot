@@ -300,27 +300,24 @@ def calculate_rsi(prices, period=14):
         return None
 
     prices = np.array(prices)
-    deltas = np.diff(prices)  # Price changes
-    gains = np.where(deltas > 0, deltas, 0)  # Positive changes
-    losses = np.where(deltas < 0, -deltas, 0)  # Negative changes (absolute)
+    deltas = np.diff(prices)
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
 
-    # Calculate initial average gain and loss (simple moving average for the first 'period')
-    avg_gain = np.mean(gains[:period])
-    avg_loss = np.mean(losses[:period])
+    # Initial 14-period SMA for gains and losses
+    avg_gain = np.mean(gains[:period]) if period <= len(gains) else 0
+    avg_loss = np.mean(losses[:period]) if period <= len(losses) else 0
 
-    # Use RMA (Running Moving Average) for the remaining calculations
-    rma_gain = avg_gain
-    rma_loss = avg_loss
-
+    # Wilder’s smoothing (1/14 factor) for remaining periods
     for i in range(period, len(gains)):
-        rma_gain = (rma_gain * (period - 1) + gains[i]) / period  # RMA for gains
-        rma_loss = (rma_loss * (period - 1) + losses[i]) / period  # RMA for losses
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
 
     # Prevent division by zero
-    if rma_loss < 0.0001:
-        rma_loss = 0.0001
+    if avg_loss < 0.0001:
+        avg_loss = 0.0001
 
-    rs = rma_gain / rma_loss
+    rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     log(f"RSI: {rsi:.2f}")
     return rsi
