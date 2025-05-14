@@ -255,42 +255,41 @@ def get_fee_estimate():
 
 # Indicator Functions
 def get_current_rsi():
-    log("Calculating current RSI...")
-    required_prices = 14  # Changed from 34 to 14 for 1-minute RSI
+    required_prices = 14  # For 1-minute RSI
 
-    # Check if we already have enough recent prices in state['price_history']
-    if len(state['price_history']) >= required_prices:
+    # Check if we have enough prices in state['price_history']
+    if len(state['price_history']) >= required_prices + 1:  # Need 15 prices for 14-period RSI
         log(f"Using existing price history with {len(state['price_history'])} prices")
-        rsi = calculate_rsi(state['price_history'][-required_prices:])
+        rsi = calculate_rsi(state['price_history'][- (required_prices + 1):])  # Slice last 15 prices
         log(f"Current RSI calculated: {rsi:.2f}")
         return rsi
 
-    # If not enough data, collect 14 minutes of price data
-    log("Not enough price history, starting to collect 14 minutes of price data for RSI...")
+    # Collect 14 minutes of price data (but ensure we get at least 15 prices)
+    log("Not enough price history, starting to collect 15 minutes of price data for RSI...")
     prices = []
     start_time = time.time()
-    target_end_time = start_time + (required_prices * 60)
+    target_end_time = start_time + ((required_prices + 1) * 60)  # Collect 15 prices
 
-    while len(prices) < required_prices and time.time() < target_end_time:
+    while len(prices) < required_prices + 1 and time.time() < target_end_time:
         price = fetch_current_price()
         if price:
             prices.append(price)
-            log(f"Fetched price {len(prices)}/{required_prices}: ${price:.2f} at {time.strftime('%H:%M:%S', time.localtime())}")
-            time.sleep(60)  # Wait 1 minute between fetches
+            log(f"Fetched price {len(prices)}/{required_prices + 1}: ${price:.2f} at {time.strftime('%H:%M:%S', time.localtime())}")
+            time.sleep(60)
         else:
             log("Price fetch failed, retrying in 5 seconds...")
             time.sleep(5)
             price = fetch_current_price()
             if price:
                 prices.append(price)
-                log(f"Retry fetched price {len(prices)}/{required_prices}: ${price:.2f}")
+                log(f"Retry fetched price {len(prices)}/{required_prices + 1}: ${price:.2f}")
                 time.sleep(60)
 
-    if len(prices) < required_prices:
-        log(f"ERROR: Only collected {len(prices)} prices, need {required_prices}")
+    if len(prices) < required_prices + 1:
+        log(f"ERROR: Only collected {len(prices)} prices, need {required_prices + 1}")
         return None
 
-    state['price_history'] = prices[-required_prices:]  # Keep the last 14 prices
+    state['price_history'] = prices[-(required_prices + 1):]  # Keep the last 15 prices
     rsi = calculate_rsi(state['price_history'])
     log(f"Current RSI calculated: {rsi:.2f}")
     return rsi
