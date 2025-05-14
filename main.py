@@ -18,6 +18,7 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from solders.message import to_bytes_versioned
+
 # Logging setup
 logger = logging.getLogger('TradingBot')
 logger.setLevel(logging.INFO)
@@ -107,6 +108,7 @@ state = {
     'peak_timestamp': 0,
     'version': "1.0",
 }
+
 # Initialize Price History
 def initialize_price_history():
     log("Initializing price history...")
@@ -138,7 +140,7 @@ def initialize_price_history():
         if price:
             prices.append(price)
             log(f"Fetched price {len(prices)}/{required_prices}: ${price:.2f}")
-            time.sleep(1)  # Increased delay to avoid rate limits
+            time.sleep(5)  # Increased delay to avoid rate limits
         else:
             attempts += 1
             log(f"Price fetch failed, attempt {attempts}/{max_attempts}")
@@ -158,6 +160,7 @@ def initialize_price_history():
         log("Saved price history to file")
     except Exception as e:
         log(f"Failed to save price history: {e}")
+
 # Helper Functions
 @sleep_and_retry
 @limits(calls=90, period=60)
@@ -185,6 +188,7 @@ def fetch_current_price():
     except Exception as e:
         log(f"Price fetch error: {str(e)}")
         return None
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_sol_balance():
     global state
@@ -249,7 +253,7 @@ def get_fee_estimate():
         log(f"Fee fetch error: {e}")
     return state['cached_fee']
 
-
+# Indicator Functions
 def get_current_rsi():
     log("Starting to collect 34 minutes of price data for RSI...")
     required_prices = 34
@@ -281,7 +285,6 @@ def get_current_rsi():
     log(f"Current RSI calculated: {rsi:.2f}")
     return rsi
 
-# Update calculate_rsi (line 248)
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
         log("Not enough prices for RSI calculation")
@@ -312,8 +315,6 @@ def calculate_rsi(prices, period=14):
     rsi = 100 - (100 / (1 + rs))
     log(f"RSI: {rsi:.2f}")
     return rsi
-
-
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
     if len(prices) < slow + signal - 1:
@@ -677,7 +678,6 @@ def load_state():
     except Exception as e:
         log(f"Failed to load state: {e}")
 
-
 def main():
     global TRADE_INTERVAL
     log("Entering main loop...")
@@ -813,7 +813,7 @@ def main():
                 continue
 
             if current_time - last_indicator_time >= 60 or any(x is None for x in [cached_rsi, cached_macd_line, cached_signal_line, cached_vwap, cached_upper_bb, cached_lower_bb, cached_atr, cached_momentum, cached_avg_atr]):
-                rsi = calculate_rsi(state['price_history'])
+                rsi = get_current_rsi()
                 macd_line, signal_line = calculate_macd(state['price_history'])
                 vwap = calculate_vwap(state['price_history'])
                 upper_bb, lower_bb = calculate_bollinger_bands(state['price_history'])
@@ -1137,6 +1137,7 @@ def main():
             log(f"Error in main loop, continuing: {e}")
             time.sleep(TRADE_INTERVAL)
             continue
+
 def tcp_health_check():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
