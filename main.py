@@ -113,7 +113,7 @@ def initialize_price_history():
     price_file = 'price_history.json'
     required_prices = 34  # Enough for 20-period RSI + buffer
 
-    # Try loading from file if recent
+    # Load recent cached prices if available
     if os.path.exists(price_file):
         try:
             with open(price_file, 'r') as f:
@@ -129,19 +129,25 @@ def initialize_price_history():
         except Exception as e:
             log(f"Failed to load price history: {e}")
 
-    # Attempt to fetch historical prices from Birdeye
-    SOL_MINT = "Ejmc1UB4EsES5UfZyp6zA1czGpQFkhb5x9NQ6uT9WKBm"  # Wrapped SOL mint
-    BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY")
+    # === Birdeye API ===
+    # Official docs: https://birdeye.so/docs/public-api (public endpoints for token charts)
+    # Endpoint: GET https://public-api.birdeye.so/public/token/{mint}/charts?type=1m
+    # Headers: optional X-API-KEY if you have one, else public access limited
+    SOL_MINT = "Ejmc1UB4EsES5UfZyp6zA1czGpQFkhb5x9NQ6uT9WKBm"  # Wrapped SOL token mint (correct)
+    BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY", "")
     url = f"https://public-api.birdeye.so/public/token/{SOL_MINT}/charts?type=1m"
     headers = {}
     if BIRDEYE_API_KEY:
         headers["X-API-KEY"] = BIRDEYE_API_KEY
+
     try:
         response = requests.get(url, headers=headers, timeout=10)
         log(f"Birdeye response status: {response.status_code}, Text: {response.text[:500]}...")
         if response.status_code == 200:
             data = response.json()
+            # Data is expected to be in "data" key as a list of dicts with keys: timestamp, value, volume, etc.
             prices_data = data.get("data", [])
+            # Extract the 'value' (price) from each entry, take last required_prices
             prices = [float(p["value"]) for p in prices_data[-required_prices:]]
             if len(prices) >= required_prices:
                 state['price_history'] = prices
@@ -152,14 +158,14 @@ def initialize_price_history():
                 return
             else:
                 log(f"Insufficient prices fetched: {len(prices)}/{required_prices}")
-                raise RuntimeError("Not enough historical data")
+                raise RuntimeError("Not enough historical data from Birdeye")
         else:
             log(f"Birdeye request failed: Status {response.status_code}")
             raise RuntimeError("Birdeye request failed")
     except Exception as e:
         log(f"Error fetching price data from Birdeye: {e}")
 
-    # Fallback to Helius RPC if Birdeye fails (approximate prices from account data)
+    # === Fallback to Helius RPC ===
     log("Falling back to Helius RPC for price approximation...")
     try:
         sol_usdc_pool = "9wPTFYFgtEWK3G3mun1kPSErTzmP1qWbmjWDe2Q1mJH"
@@ -178,7 +184,8 @@ def initialize_price_history():
                 }
             ]
         }
-        response = client._provider.make_request(payload)
+        # IMPORTANT FIX: pass parser=None to fix missing positional argument error in newer Helius versions
+        response = client._provider.make_request(payload, parser=None)
         if "result" in response and response["result"]:
             prices = []
             for account in response["result"][:required_prices]:
@@ -195,7 +202,7 @@ def initialize_price_history():
     except Exception as e:
         log(f"Error with Helius RPC: {e}")
 
-    # Ultimate fallback to Jupiter API if both fail
+    # === Final fallback to Jupiter API ===
     log("Falling back to Jupiter API...")
     prices = []
     attempts = 0
@@ -210,12 +217,14 @@ def initialize_price_history():
             attempts += 1
             log(f"Price fetch failed, attempt {attempts}/{max_attempts}")
             time.sleep(60)
+
     if len(prices) < required_prices:
         log(f"ERROR: Could not fetch enough prices, got {len(prices)}/{required_prices}")
         raise RuntimeError("Failed to initialize price history")
+
     state['price_history'] = prices[-required_prices:]
 
-    # Save to file
+    # Save final fallback data to file
     try:
         with open(price_file, 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
