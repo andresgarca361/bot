@@ -260,6 +260,7 @@ def get_current_rsi():
     # Check if we have enough prices in state['price_history']
     if len(state['price_history']) >= required_prices + 1:  # Need 21 prices for 20-period RSI
         log(f"Using existing price history with {len(state['price_history'])} prices")
+        log(f"Last 21 prices for RSI: {state['price_history'][-21:]}")
         rsi = calculate_rsi(state['price_history'][- (required_prices + 1):])  # Slice last 21 prices
         log(f"Current RSI calculated: {rsi:.2f}")
         return rsi
