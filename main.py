@@ -111,9 +111,9 @@ state = {
 
 # Initialize Price History
 def initialize_price_history():
-    log("Initializing price history...")
+    log("Initializing price history with Helius...")
     price_file = 'price_history.json'
-    required_prices = 34  # Enough for MACD (26 + 9 - 1)
+    required_prices = 34  # Enough for 20-period RSI + buffer
 
     # Try loading from file if recent
     if os.path.exists(price_file):
@@ -122,36 +122,56 @@ def initialize_price_history():
                 data = json.load(f)
                 prices = data.get('prices', [])
                 timestamp = data.get('timestamp', 0)
-                if time.time() - timestamp < 3600 and len(prices) >= required_prices:  # Use if <1 hour old
+                if time.time() - timestamp < 3600 and len(prices) >= required_prices:
                     state['price_history'] = prices[-required_prices:]
                     log(f"Loaded {len(state['price_history'])} prices from file")
                     return
                 else:
-                    log("Price history outdated or insufficient, fetching new data")
+                    log("Price history outdated or insufficient, fetching from Helius")
         except Exception as e:
             log(f"Failed to load price history: {e}")
 
-    # Fetch live prices
-    prices = []
-    attempts = 0
-    max_attempts = 10
-    while len(prices) < required_prices and attempts < max_attempts:
-        price = fetch_current_price()
-        if price:
-            prices.append(price)
-            log(f"Fetched price {len(prices)}/{required_prices}: ${price:.2f}")
-            time.sleep(60)  # Increased delay to avoid rate limits
+    # Fetch historical candles from Helius via HTTP
+    url = f"https://api.helius.xyz/v0/markets/candles?api-key={HELIUS_API_KEY}&pair=SOL-USDC&resolution=60&timeframe=3600"
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if 'result' in data and data['result']:
+                candles = data['result']
+                prices = [float(candle['close']) for candle in sorted(candles, key=lambda x: x['time'], reverse=True)[:required_prices]]
+                if len(prices) >= required_prices:
+                    state['price_history'] = prices
+                    log(f"Initialized {len(state['price_history'])} prices from Helius")
+                else:
+                    log(f"Insufficient candles fetched: {len(prices)}/{required_prices}")
+                    raise RuntimeError("Not enough historical data")
+            else:
+                log(f"Helius fetch failed: {data.get('error', 'No result')}")
+                raise RuntimeError("Helius API error")
         else:
-            attempts += 1
-            log(f"Price fetch failed, attempt {attempts}/{max_attempts}")
-            time.sleep(60)  # Longer delay on failure
-
-    if len(prices) < required_prices:
-        log(f"ERROR: Could not fetch enough prices, got {len(prices)}/{required_prices}")
-        raise RuntimeError("Failed to initialize price history")
-
-    state['price_history'] = prices[-required_prices:]
-    log(f"Initialized {len(state['price_history'])} prices")
+            log(f"Helius request failed: Status {response.status_code}, Response: {response.text}")
+            raise RuntimeError("Helius API request failed")
+    except Exception as e:
+        log(f"Error fetching Helius data: {e}")
+        # Fallback to original method if Helius fails
+        prices = []
+        attempts = 0
+        max_attempts = 10
+        while len(prices) < required_prices and attempts < max_attempts:
+            price = fetch_current_price()
+            if price:
+                prices.append(price)
+                log(f"Fetched price {len(prices)}/{required_prices}: ${price:.2f}")
+                time.sleep(60)
+            else:
+                attempts += 1
+                log(f"Price fetch failed, attempt {attempts}/{max_attempts}")
+                time.sleep(60)
+        if len(prices) < required_prices:
+            log(f"ERROR: Could not fetch enough prices, got {len(prices)}/{required_prices}")
+            raise RuntimeError("Failed to initialize price history")
+        state['price_history'] = prices[-required_prices:]
 
     # Save to file
     try:
