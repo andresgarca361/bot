@@ -315,7 +315,7 @@ def get_current_rsi():
     log(f"Current RSI calculated: {rsi:.2f}")
     return rsi
 
-def calculate_rsi(prices, period=20):  # Increased from 14 to 20
+def calculate_rsi(prices, period=20):
     if len(prices) < period + 1:
         log("Not enough prices for RSI calculation")
         return None
@@ -325,14 +325,14 @@ def calculate_rsi(prices, period=20):  # Increased from 14 to 20
     gains = np.where(deltas > 0, deltas, 0)
     losses = np.where(deltas < 0, -deltas, 0)
 
-    # Initial 20-period SMA for gains and losses
-    avg_gain = np.mean(gains[:period]) if period <= len(gains) else 0
-    avg_loss = np.mean(losses[:period]) if period <= len(losses) else 0
+    # Use EMA-like smoothing for gains and losses (Wilder's method)
+    alpha = 1 / period
+    avg_gain = gains[0]
+    avg_loss = losses[0]
 
-    # Wilder’s smoothing (1/20 factor) for remaining periods
-    for i in range(period, len(gains)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    for i in range(1, len(gains)):
+        avg_gain = (alpha * gains[i]) + ((1 - alpha) * avg_gain)
+        avg_loss = (alpha * losses[i]) + ((1 - alpha) * avg_loss)
 
     # Prevent division by zero
     if avg_loss < 0.0001:
