@@ -109,7 +109,7 @@ state = {
     'version': "1.0",
 }
 def initialize_price_history():
-    log("Initializing price history with Birdeye...")
+    log("Initializing price history with CoinGecko...")
     price_file = 'price_history.json'
     required_prices = 34  # Enough for 20-period RSI + buffer
 
@@ -125,84 +125,44 @@ def initialize_price_history():
                     log(f"Loaded {len(state['price_history'])} prices from file")
                     return
                 else:
-                    log("Price history outdated or insufficient, fetching from Birdeye")
+                    log("Price history outdated or insufficient, fetching from CoinGecko")
         except Exception as e:
             log(f"Failed to load price history: {e}")
 
-    # === Birdeye API ===
-    # Official docs: https://birdeye.so/docs/public-api (public endpoints for token charts)
-    # Endpoint: GET https://public-api.birdeye.so/public/token/{mint}/charts?type=1m
-    # Headers: optional X-API-KEY if you have one, else public access limited
-    SOL_MINT = "Ejmc1UB4EsES5UfZyp6zA1czGpQFkhb5x9NQ6uT9WKBm"  # Wrapped SOL token mint (correct)
-    BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY", "")
-    url = f"https://public-api.birdeye.so/public/token/{SOL_MINT}/charts?type=1m"
-    headers = {}
-    if BIRDEYE_API_KEY:
-        headers["X-API-KEY"] = BIRDEYE_API_KEY
+    # Fetch historical prices from CoinGecko
+    url = "https://api.coingecko.com/api/v3/coins/solana/market_chart"
+    params = {
+        "vs_currency": "usd",
+        "days": "0.0417"  # ~1 hour, gives minute granularity
+    }
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        log(f"Birdeye response status: {response.status_code}, Text: {response.text[:500]}...")
+        response = requests.get(url, params=params, timeout=10)
+        log(f"CoinGecko response status: {response.status_code}, Text: {response.text[:500]}...")
         if response.status_code == 200:
             data = response.json()
-            # Data is expected to be in "data" key as a list of dicts with keys: timestamp, value, volume, etc.
-            prices_data = data.get("data", [])
-            # Extract the 'value' (price) from each entry, take last required_prices
-            prices = [float(p["value"]) for p in prices_data[-required_prices:]]
-            if len(prices) >= required_prices:
-                state['price_history'] = prices
-                log(f"Initialized {len(state['price_history'])} prices from Birdeye")
-                with open(price_file, 'w') as f:
-                    json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
-                log("Saved price history to file")
-                return
-            else:
-                log(f"Insufficient prices fetched: {len(prices)}/{required_prices}")
-                raise RuntimeError("Not enough historical data from Birdeye")
-        else:
-            log(f"Birdeye request failed: Status {response.status_code}")
-            raise RuntimeError("Birdeye request failed")
-    except Exception as e:
-        log(f"Error fetching price data from Birdeye: {e}")
+            prices_data = data.get("prices", [])
+            if len(prices_data) < required_prices:
+                log(f"Insufficient prices fetched from CoinGecko: {len(prices_data)}/{required_prices}")
+                raise RuntimeError("Not enough historical data from CoinGecko")
 
-    # === Fallback to Helius RPC ===
-    log("Falling back to Helius RPC for price approximation...")
-    try:
-        sol_usdc_pool = "9wPTFYFgtEWK3G3mun1kPSErTzmP1qWbmjWDe2Q1mJH"
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getProgramAccounts",
-            "params": [
-                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-                {
-                    "encoding": "base64",
-                    "filters": [
-                        {"dataSize": 165},
-                        {"memcmp": {"offset": 0, "bytes": sol_usdc_pool[:32].encode("utf-8").hex()}}
-                    ]
-                }
-            ]
-        }
-        # IMPORTANT FIX: pass parser=None to fix missing positional argument error in newer Helius versions
-        response = client._provider.make_request(payload, parser=None)
-        if "result" in response and response["result"]:
-            prices = []
-            for account in response["result"][:required_prices]:
-                prices.append(169.00 + (len(prices) * 0.01))  # Dummy placeholder
-            if len(prices) >= required_prices:
-                state['price_history'] = prices[-required_prices:]
-                log(f"Initialized {len(state['price_history'])} prices from Helius RPC (approximated)")
-            else:
-                log(f"Insufficient prices from RPC: {len(prices)}/{required_prices}")
-                raise RuntimeError("Not enough RPC data")
-        else:
-            log(f"Helius RPC fetch failed: {response.get('error', 'No result')}")
-            raise RuntimeError("Helius RPC error")
-    except Exception as e:
-        log(f"Error with Helius RPC: {e}")
+            # Verify 1-minute intervals (timestamps should be 60 seconds apart)
+            timestamps = [p[0] / 1000 for p in prices_data]  # Convert ms to seconds
+            intervals = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps)-1)]
+            if intervals and max(intervals) > 65 or min(intervals) < 55:  # Allow 5-second leeway
+                log(f"Unexpected timestamp intervals in CoinGecko data: {intervals}")
+                raise RuntimeError("CoinGecko data not at 1-minute intervals")
 
-    # === Final fallback to Jupiter API ===
+            prices = [p[1] for p in prices_data[-required_prices:]]
+            state['price_history'] = prices
+            log(f"Initialized {len(state['price_history'])} prices from CoinGecko")
+        else:
+            log(f"CoinGecko request failed: Status {response.status_code}, Response: {response.text}")
+            raise RuntimeError("CoinGecko request failed")
+    except Exception as e:
+        log(f"Error fetching price data from CoinGecko: {e}")
+
+    # Fallback to Jupiter API
     log("Falling back to Jupiter API...")
     prices = []
     attempts = 0
@@ -224,14 +184,13 @@ def initialize_price_history():
 
     state['price_history'] = prices[-required_prices:]
 
-    # Save final fallback data to file
+    # Save to file
     try:
         with open(price_file, 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
         log("Saved price history to file")
     except Exception as e:
         log(f"Failed to save price history: {e}")
-
 
 # Helper Functions
 @sleep_and_retry
