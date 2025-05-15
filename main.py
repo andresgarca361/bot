@@ -109,7 +109,7 @@ state = {
     'version': "1.0",
 }
 def initialize_price_history():
-    log("Initializing price history with Helius...")
+    log("Initializing price history with Birdeye...")
     price_file = 'price_history.json'
     required_prices = 34  # Enough for 20-period RSI + buffer
 
@@ -125,78 +125,43 @@ def initialize_price_history():
                     log(f"Loaded {len(state['price_history'])} prices from file")
                     return
                 else:
-                    log("Price history outdated or insufficient, fetching from Helius")
+                    log("Price history outdated or insufficient, fetching from Birdeye")
         except Exception as e:
             log(f"Failed to load price history: {e}")
 
-    # Attempt to fetch historical prices from Helius REST API
-    current_time = int(time.time())
-    start_time = current_time - 3600  # Last 1 hour
-    url = f"https://api.helius.xyz/v0/tokens/{SOL_MINT}/prices?api-key={HELIUS_API_KEY}&start={start_time}&end={current_time}&interval=1m"
+    # Use Birdeye API instead of Helius
+    BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY")  # Optional
+    SOL_MINT = "So11111111111111111111111111111111111111112"
+    url = f"https://public-api.birdeye.so/public/token/{SOL_MINT}/charts?type=1m"
+
+    headers = {}
+    if BIRDEYE_API_KEY:
+        headers["X-API-KEY"] = BIRDEYE_API_KEY
+
     try:
-        response = requests.get(url, timeout=10)
-        log(f"Helius REST response status: {response.status_code}, Text: {response.text[:500]}...")  # Log first 500 chars
+        response = requests.get(url, headers=headers, timeout=10)
+        log(f"Birdeye response status: {response.status_code}, Text: {response.text[:500]}...")
         if response.status_code == 200:
             data = response.json()
-            if "prices" in data and data["prices"]:
-                prices_data = data["prices"]
-                prices = [float(entry["price"]) for entry in sorted(prices_data, key=lambda x: x["timestamp"], reverse=True)[:required_prices]]
+            prices_data = data.get("data", [])
+            if prices_data:
+                prices = [float(p["value"]) for p in sorted(prices_data, key=lambda x: x["unixTime"], reverse=True)[:required_prices]]
                 if len(prices) >= required_prices:
                     state['price_history'] = prices
-                    log(f"Initialized {len(state['price_history'])} prices from Helius REST")
+                    log(f"Initialized {len(state['price_history'])} prices from Birdeye")
                 else:
                     log(f"Insufficient prices fetched: {len(prices)}/{required_prices}")
                     raise RuntimeError("Not enough historical data")
             else:
-                log(f"Helius REST fetch failed: {data.get('error', 'No prices data')}")
-                raise RuntimeError("Helius API error")
+                log("No price data in Birdeye response")
+                raise RuntimeError("Birdeye returned no data")
         else:
-            log(f"Helius REST request failed: Status {response.status_code}")
-            raise RuntimeError("Helius API request failed")
+            log(f"Birdeye request failed: Status {response.status_code}")
+            raise RuntimeError("Birdeye request failed")
     except Exception as e:
-        log(f"Error with Helius REST: {e}")
+        log(f"Error fetching price data from Birdeye: {e}")
 
-    # Fallback to Helius RPC if REST fails (approximate prices from account data)
-    log("Falling back to Helius RPC for price approximation...")
-    try:
-        # Use a known SOL/USDC pool (e.g., Orca pool; adjust if needed)
-        sol_usdc_pool = "9wPTFYFgtEWK3G3mun1kPSErTzmP1qWbmjWDe2Q1mJH"  # Placeholder pool address
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getProgramAccounts",
-            "params": [
-                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # Token program ID
-                {
-                    "encoding": "base64",
-                    "filters": [
-                        {"dataSize": 165},  # Size of a token account
-                        {"memcmp": {"offset": 0, "bytes": sol_usdc_pool[:32].encode("utf-8").hex()}}  # Filter by pool address
-                    ]
-                }
-            ]
-        }
-        response = client._provider.make_request(payload)
-        if "result" in response and response["result"]:
-            # Extract recent transactions or account data to infer prices (simplified)
-            prices = []
-            for account in response["result"][:required_prices]:
-                # This is a rough approximation; actual price derivation needs transaction parsing
-                # For now, use a placeholder price (replace with actual logic)
-                prices.append(169.00 + (len(prices) * 0.01))  # Dummy data
-            if len(prices) >= required_prices:
-                state['price_history'] = prices[-required_prices:]
-                log(f"Initialized {len(state['price_history'])} prices from Helius RPC (approximated)")
-            else:
-                log(f"Insufficient prices from RPC: {len(prices)}/{required_prices}")
-                raise RuntimeError("Not enough RPC data")
-        else:
-            log(f"Helius RPC fetch failed: {response.get('error', 'No result')}")
-            raise RuntimeError("Helius RPC error")
-    except Exception as e:
-        log(f"Error with Helius RPC: {e}")
-
-    # Ultimate fallback to Jupiter API if both Helius methods fail
+    # Ultimate fallback to Jupiter API if Birdeye fails
     log("Falling back to Jupiter API...")
     prices = []
     attempts = 0
@@ -223,6 +188,7 @@ def initialize_price_history():
         log("Saved price history to file")
     except Exception as e:
         log(f"Failed to save price history: {e}")
+
 
 # Helper Functions
 @sleep_and_retry
