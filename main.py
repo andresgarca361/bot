@@ -110,6 +110,8 @@ state = {
 }
 
 
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30))
 def initialize_price_history():
     log("Initializing price history with CryptoCompare...")
@@ -167,13 +169,23 @@ def initialize_price_history():
 
             state['price_history'] = closes[-required_prices:]
             log(f"Initialized {len(state['price_history'])} prices from CryptoCompare")
+
+            # ✅ SAVE TO FILE
+            try:
+                with open(price_file, 'w') as f:
+                    json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
+                log("Saved price history to file")
+            except Exception as e:
+                log(f"Failed to save price history: {e}")
+
+            return  # ✅ PREVENT FALLBACK ON SUCCESS
         else:
             log(f"CryptoCompare request failed: Status {response.status_code}, Response: {response.text}")
             raise RuntimeError("CryptoCompare request failed")
     except Exception as e:
         log(f"Error fetching price data from CryptoCompare: {e}")
 
-    # Fallback to Jupiter API
+    # ⛔ FALLBACK to Jupiter API
     log("Falling back to Jupiter API...")
     prices = []
     attempts = 0
@@ -195,7 +207,6 @@ def initialize_price_history():
 
     state['price_history'] = prices[-required_prices:]
 
-    # Save to file
     try:
         with open(price_file, 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
