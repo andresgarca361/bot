@@ -110,7 +110,7 @@ state = {
 }
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30))
 def initialize_price_history():
-    log("Initializing price history with CoinMarketCap...")
+    log("Initializing price history with Finnhub...")
     price_file = 'price_history.json'
     required_prices = 34  # Enough for 20-period RSI + buffer
 
@@ -126,56 +126,59 @@ def initialize_price_history():
                     log(f"Loaded {len(state['price_history'])} prices from file")
                     return
                 else:
-                    log("Price history outdated or insufficient, fetching from CoinMarketCap")
+                    log("Price history outdated or insufficient, fetching from Finnhub")
         except Exception as e:
             log(f"Failed to load price history: {e}")
 
-    # Fetch historical prices from CoinMarketCap
-    CMC_KEY = os.getenv("CMC_KEY")
-    if not CMC_KEY:
-        log("ERROR: CMC_KEY not set")
-        raise ValueError("CMC_KEY must be set in environment variables")
-    url = "https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical"
-    end_time = int(time.time())  # Current timestamp in seconds
-    start_time = end_time - 3600  # 1 hour ago
+    # Fetch historical prices from Finnhub
+    FINNHUB_API_KEY = os.getenv("CMC_KEY")
+    if not FINNHUB_API_KEY:
+        log("ERROR: CMC_KEY (used as Finnhub key) is not set")
+        raise RuntimeError("Finnhub API key not found")
+
+    symbol = 'BINANCE:SOLUSDT'
+    resolution = '1'  # 1-minute candles
+    end_time = int(time.time())
+    start_time = end_time - required_prices * 60
+
+    url = "https://finnhub.io/api/v1/crypto/candle"
     params = {
-        "symbol": "SOL",
-        "convert": "USD",
-        "interval": "1m",
-        "time_start": start_time,
-        "time_end": end_time
-    }
-    headers = {
-        "X-CMC_PRO_API_KEY": CMC_KEY,
-        "Accept": "application/json",
-        "User-Agent": "SolanaTradingBot/1.0"
+        "symbol": symbol,
+        "resolution": resolution,
+        "from": start_time,
+        "to": end_time,
+        "token": FINNHUB_API_KEY
     }
 
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=10)
-        log(f"CoinMarketCap response status: {response.status_code}, Text: {response.text[:500]}...")
+        response = requests.get(url, params=params, timeout=10)
+        log(f"Finnhub response status: {response.status_code}, Text length: {len(response.text)}...")
         if response.status_code == 200:
             data = response.json()
-            quotes = data["data"]["SOL"][0]["quotes"]
-            if len(quotes) < required_prices:
-                log(f"Insufficient prices fetched from CoinMarketCap: {len(quotes)}/{required_prices}")
-                raise RuntimeError("Not enough historical data from CoinMarketCap")
+            if data.get("s") != "ok":
+                log(f"Finnhub returned error: {data.get('s')}")
+                raise RuntimeError("Finnhub response not ok")
 
-            # Verify 1-minute intervals (timestamps should be 60 seconds apart)
-            timestamps = [int(time.mktime(time.strptime(q["timestamp"], "%Y-%m-%dT%H:%M:%S.%fZ"))) for q in quotes]
-            intervals = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps)-1)]
-            if intervals and max(intervals) > 65 or min(intervals) < 55:  # Allow 5-second leeway
-                log(f"Unexpected timestamp intervals in CoinMarketCap data: {intervals}")
-                raise RuntimeError("CoinMarketCap data not at 1-minute intervals")
+            closes = data.get("c", [])
+            timestamps = data.get("t", [])
+            if len(closes) < required_prices or len(timestamps) != len(closes):
+                log(f"Insufficient or mismatched data from Finnhub: {len(closes)} closes, {len(timestamps)} timestamps")
+                raise RuntimeError("Not enough historical data from Finnhub")
 
-            prices = [q["quote"]["USD"]["close"] for q in quotes[-required_prices:]]
+            # Verify 1-minute intervals (timestamps should be ~60s apart)
+            intervals = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps) - 1)]
+            if intervals and (max(intervals) > 65 or min(intervals) < 55):
+                log(f"Unexpected timestamp intervals in Finnhub data: {intervals}")
+                raise RuntimeError("Finnhub data not at 1-minute intervals")
+
+            prices = closes[-required_prices:]
             state['price_history'] = prices
-            log(f"Initialized {len(state['price_history'])} prices from CoinMarketCap")
+            log(f"Initialized {len(state['price_history'])} prices from Finnhub")
         else:
-            log(f"CoinMarketCap request failed: Status {response.status_code}, Response: {response.text}")
-            raise RuntimeError("CoinMarketCap request failed")
+            log(f"Finnhub request failed: Status {response.status_code}, Response: {response.text}")
+            raise RuntimeError("Finnhub request failed")
     except Exception as e:
-        log(f"Error fetching price data from CoinMarketCap: {e}")
+        log(f"Error fetching price data from Finnhub: {e}")
 
     # Fallback to Jupiter API
     log("Falling back to Jupiter API...")
@@ -206,6 +209,7 @@ def initialize_price_history():
         log("Saved price history to file")
     except Exception as e:
         log(f"Failed to save price history: {e}")
+
 
 # Helper Functions
 @sleep_and_retry
