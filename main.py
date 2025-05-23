@@ -311,16 +311,16 @@ def get_fee_estimate():
 def get_current_rsi():
     required_prices = 20  # Updated to match new period
 
-    # Check if we have enough prices in state['price_history']
-    if len(state['price_history']) >= required_prices + 1:  # Need 21 prices for 20-period RSI
-        log(f"Using existing price history with {len(state['price_history'])} prices")
-        log(f"Last 21 prices for RSI: {state['price_history'][-21:]}")
-        rsi = calculate_rsi(state['price_history'][- (required_prices + 1):])  # Slice last 21 prices
+    # Check if we have enough prices in state['rsi_price_history']
+    if len(state['rsi_price_history']) >= required_prices + 1:  # Need 21 prices for 20-period RSI
+        log(f"Using existing RSI price history with {len(state['rsi_price_history'])} prices")
+        log(f"Last 21 prices for RSI: {state['rsi_price_history'][-21:]}")
+        rsi = calculate_rsi(state['rsi_price_history'][- (required_prices + 1):])  # Slice last 21 prices
         log(f"Current RSI calculated: {rsi:.2f}")
         return rsi
 
-    # Collect 20 minutes of price data (but ensure we get at least 21 prices)
-    log("Not enough price history, starting to collect 21 minutes of price data for RSI...")
+    # Collect 21 minutes of price data if not enough
+    log("Not enough RSI price history, starting to collect 21 minutes of price data...")
     prices = []
     start_time = time.time()
     target_end_time = start_time + ((required_prices + 1) * 60)  # Collect 21 prices
@@ -344,8 +344,8 @@ def get_current_rsi():
         log(f"ERROR: Only collected {len(prices)} prices, need {required_prices + 1}")
         return None
 
-    state['price_history'] = prices[-(required_prices + 1):]  # Keep the last 21 prices
-    rsi = calculate_rsi(state['price_history'])
+    state['rsi_price_history'] = prices[-(required_prices + 1):]  # Update rsi_price_history with the last 21 prices
+    rsi = calculate_rsi(state['rsi_price_history'])
     log(f"Current RSI calculated: {rsi:.2f}")
     return rsi
 
