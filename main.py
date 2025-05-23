@@ -738,7 +738,6 @@ def load_state():
                 state.update(json.load(f))
     except Exception as e:
         log(f"Failed to load state: {e}")
-
 def main():
     global TRADE_INTERVAL
     log("Entering main loop...")
@@ -776,6 +775,11 @@ def main():
             state['peak_portfolio'] = portfolio_value
             state['peak_timestamp'] = current_time
             save_state()
+
+    # Sync rsi_price_history with price_history after initialization
+    if state['price_history'] and not state['rsi_price_history']:
+        state['rsi_price_history'] = state['price_history'][-34:]  # Use last 34 prices
+        log(f"Initialized rsi_price_history with {len(state['rsi_price_history'])} prices from price_history")
 
     last_stats_time = time.time()
     last_indicator_time = 0
