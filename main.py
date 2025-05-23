@@ -746,6 +746,8 @@ def main():
         state['peak_timestamp'] = time.time()
     if 'trade_cooldown_until' not in state:
         state['trade_cooldown_until'] = 0
+    if 'rsi_price_history' not in state:
+        state['rsi_price_history'] = []  # Initialize RSI-specific price history
     save_state()
 
     # Validate and reset state on startup
@@ -826,7 +828,7 @@ def main():
                         log(f"Reset peak_portfolio and peak_market_value to ${portfolio_value:.2f} after long pause")
                     save_state()
                 else:
-                    rsi = calculate_rsi(state['price_history']) if len(state['price_history']) >= 15 else None
+                    rsi = calculate_rsi(state['rsi_price_history']) if len(state['rsi_price_history']) >= 15 else None
                     if rsi is not None and rsi > 50 and remaining_pause > 6 * 3600:
                         state['pause_until'] = current_time + 6 * 3600
                         log("RSI > 50, reducing pause to 6 hours")
@@ -858,6 +860,17 @@ def main():
             state['price_history'].append(price)
             if len(state['price_history']) > 200:
                 state['price_history'].pop(0)
+
+            # Add price to rsi_price_history only every minute
+            if 'last_rsi_price_time' not in locals():
+                last_rsi_price_time = 0
+            if current_time - last_rsi_price_time >= 60:
+                state['rsi_price_history'].append(price)
+                last_rsi_price_time = current_time
+                log(f"Added price ${price:.2f} to rsi_price_history at {time.strftime('%H:%M:%S')}")
+                if len(state['rsi_price_history']) > 200:
+                    state['rsi_price_history'].pop(0)
+
             state['last_fetch_time'] = current_time
             save_state()
 
