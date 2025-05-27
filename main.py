@@ -1077,10 +1077,10 @@ def main():
                         else:
                             log(f"Cannot buy: Total position {total_position_after_buy:.4f} SOL exceeds max {MAX_POSITION_SOL} SOL")
 
-            # Tiered Sell Logic (Already Modified to Use Balance)
+            # Tiered Sell Logic (Modified to Enforce Cooldown at RSI 65)
             if total_sol_balance > MIN_SOL_THRESHOLD and price:
                 multiplier = 1.1 if macd_line < 0 else 0.9
-                if rsi is not None and rsi > 65:
+                if rsi is not None and rsi > 65 and current_time >= state['trade_cooldown_until']:
                     amount_to_sell = (total_sol_balance - MIN_SOL_THRESHOLD) * 0.3
                     if amount_to_sell > 0:
                         log(f"Selling 30% of available SOL due to RSI 65 ({rsi:.2f})")
