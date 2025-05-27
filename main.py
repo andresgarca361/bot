@@ -996,83 +996,94 @@ def main():
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            # Tiered Buy Logic
+            # Tiered Buy Logic (Modified to Use Balance)
             if current_time >= state['trade_cooldown_until']:
+                total_usdc_balance = get_usdc_balance()
+                if total_usdc_balance is None:
+                    log("Failed to fetch USDC balance, skipping buy logic")
+                    time.sleep(TRADE_INTERVAL)
+                    continue
                 if check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
-                    position_size = calculate_position_size(portfolio_value, atr, avg_atr)
+                    position_size = calculate_position_size(portfolio_value, atr, avg_atr)  # SOL to buy based on portfolio risk
+                    max_buy_usdc = total_usdc_balance * 0.9  # Reserve 10% USDC as buffer
+                    max_buy_sol = max_buy_usdc / (price * (1 + 0.002))  # Account for 0.2% fee
+                    position_size = min(position_size, max_buy_sol)  # Limit by available USDC
                     if position_size > 0:
-                        new_position = state['position'] + position_size
-                        if new_position <= MAX_POSITION_SOL:
-                            if rsi is not None and rsi <= 35 and state['position'] < MAX_POSITION_SOL:
+                        total_position_after_buy = total_sol_balance + position_size
+                        if total_position_after_buy <= MAX_POSITION_SOL:
+                            if rsi is not None and rsi <= 35:
                                 buy_amount = position_size * 0.3
                                 old_sol_balance = sol_balance
                                 old_usdc_balance = usdc_balance
                                 cost = buy_amount * price * (1 + 0.002)
-                                execute_buy(buy_amount)
-                                time.sleep(10)
-                                portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                                if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                    expected_sol = old_sol_balance + (buy_amount * (1 - 0.002))
-                                    expected_usdc = old_usdc_balance - cost
-                                    if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
-                                        state['position'] += buy_amount
-                                        state['trade_cooldown_until'] = current_time + 180  # 3-min cooldown for RSI 35
-                                        state['entry_price'] = (state['entry_price'] * (state['position'] - buy_amount) + price * buy_amount) / state['position'] if state['position'] > 0 else price
-                                        last_sol_balance = sol_balance_after
-                                        last_usdc_balance = usdc_balance_after
-                                        state['last_sol_balance'] = sol_balance_after
-                                        state['last_usdc_balance'] = usdc_balance_after
-                                        log(f"Bought 30% ({buy_amount:.4f} SOL) at RSI 35, new position: {state['position']:.4f} SOL")
-                            if rsi is not None and rsi <= 31 and state['position'] < MAX_POSITION_SOL and current_time >= state['trade_cooldown_until']:
+                                if cost <= total_usdc_balance:
+                                    execute_buy(buy_amount)
+                                    time.sleep(10)
+                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
+                                    if portfolio_value_after and sol_balance_after and usdc_balance_after:
+                                        expected_sol = old_sol_balance + (buy_amount * (1 - 0.002))
+                                        expected_usdc = old_usdc_balance - cost
+                                        if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
+                                            state['position'] = sol_balance_after  # Update position for tracking
+                                            state['trade_cooldown_until'] = current_time + 180  # 3-min cooldown for RSI 35
+                                            state['entry_price'] = price if state['position'] == buy_amount else (state['entry_price'] * (state['position'] - buy_amount) + price * buy_amount) / state['position']
+                                            last_sol_balance = sol_balance_after
+                                            last_usdc_balance = usdc_balance_after
+                                            state['last_sol_balance'] = sol_balance_after
+                                            state['last_usdc_balance'] = usdc_balance_after
+                                            log(f"Bought 30% ({buy_amount:.4f} SOL) at RSI 35, new position: {state['position']:.4f} SOL")
+                            if rsi is not None and rsi <= 31 and current_time >= state['trade_cooldown_until']:
                                 buy_amount = position_size * 0.4 / 0.7  # 40% of remaining
                                 old_sol_balance = sol_balance
                                 old_usdc_balance = usdc_balance
                                 cost = buy_amount * price * (1 + 0.002)
-                                execute_buy(buy_amount)
-                                time.sleep(10)
-                                portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                                if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                    expected_sol = old_sol_balance + (buy_amount * (1 - 0.002))
-                                    expected_usdc = old_usdc_balance - cost
-                                    if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
-                                        state['position'] += buy_amount
-                                        state['trade_cooldown_until'] = current_time + 900  # 15-min cooldown for RSI 31
-                                        state['entry_price'] = (state['entry_price'] * (state['position'] - buy_amount) + price * buy_amount) / state['position']
-                                        last_sol_balance = sol_balance_after
-                                        last_usdc_balance = usdc_balance_after
-                                        state['last_sol_balance'] = sol_balance_after
-                                        state['last_usdc_balance'] = usdc_balance_after
-                                        log(f"Bought 40% ({buy_amount:.4f} SOL) at RSI 31, new position: {state['position']:.4f} SOL")
-                            if (rsi is not None and rsi <= 25 or momentum > 0.5) and state['position'] < MAX_POSITION_SOL and current_time >= state['trade_cooldown_until']:
+                                if cost <= total_usdc_balance:
+                                    execute_buy(buy_amount)
+                                    time.sleep(10)
+                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
+                                    if portfolio_value_after and sol_balance_after and usdc_balance_after:
+                                        expected_sol = old_sol_balance + (buy_amount * (1 - 0.002))
+                                        expected_usdc = old_usdc_balance - cost
+                                        if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
+                                            state['position'] = sol_balance_after
+                                            state['trade_cooldown_until'] = current_time + 900  # 15-min cooldown for RSI 31
+                                            state['entry_price'] = (state['entry_price'] * (state['position'] - buy_amount) + price * buy_amount) / state['position']
+                                            last_sol_balance = sol_balance_after
+                                            last_usdc_balance = usdc_balance_after
+                                            state['last_sol_balance'] = sol_balance_after
+                                            state['last_usdc_balance'] = usdc_balance_after
+                                            log(f"Bought 40% ({buy_amount:.4f} SOL) at RSI 31, new position: {state['position']:.4f} SOL")
+                            if (rsi is not None and rsi <= 25 or momentum > 0.5) and current_time >= state['trade_cooldown_until']:
                                 buy_amount = position_size * 0.3 / 0.7  # 30% of remaining
                                 old_sol_balance = sol_balance
                                 old_usdc_balance = usdc_balance
                                 cost = buy_amount * price * (1 + 0.002)
-                                execute_buy(buy_amount)
-                                time.sleep(10)
-                                portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                                if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                    expected_sol = old_sol_balance + (buy_amount * (1 - 0.002))
-                                    expected_usdc = old_usdc_balance - cost
-                                    if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
-                                        state['position'] += buy_amount
-                                        state['trade_cooldown_until'] = current_time + 900  # 15-min cooldown for RSI 25
-                                        state['entry_price'] = (state['entry_price'] * (state['position'] - buy_amount) + price * buy_amount) / state['position']
-                                        last_sol_balance = sol_balance_after
-                                        last_usdc_balance = usdc_balance_after
-                                        state['last_sol_balance'] = sol_balance_after
-                                        state['last_usdc_balance'] = usdc_balance_after
-                                        log(f"Bought 30% ({buy_amount:.4f} SOL) at RSI 25 or momentum {momentum:.2f}%, new position: {state['position']:.4f} SOL")
+                                if cost <= total_usdc_balance:
+                                    execute_buy(buy_amount)
+                                    time.sleep(10)
+                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
+                                    if portfolio_value_after and sol_balance_after and usdc_balance_after:
+                                        expected_sol = old_sol_balance + (buy_amount * (1 - 0.002))
+                                        expected_usdc = old_usdc_balance - cost
+                                        if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
+                                            state['position'] = sol_balance_after
+                                            state['trade_cooldown_until'] = current_time + 900  # 15-min cooldown for RSI 25
+                                            state['entry_price'] = (state['entry_price'] * (state['position'] - buy_amount) + price * buy_amount) / state['position']
+                                            last_sol_balance = sol_balance_after
+                                            last_usdc_balance = usdc_balance_after
+                                            state['last_sol_balance'] = sol_balance_after
+                                            state['last_usdc_balance'] = usdc_balance_after
+                                            log(f"Bought 30% ({buy_amount:.4f} SOL) at RSI 25 or momentum {momentum:.2f}%, new position: {state['position']:.4f} SOL")
                         else:
-                            log(f"Cannot buy: New position {new_position:.4f} SOL exceeds max {MAX_POSITION_SOL} SOL")
+                            log(f"Cannot buy: Total position {total_position_after_buy:.4f} SOL exceeds max {MAX_POSITION_SOL} SOL")
 
-            # Tiered Sell Logic
-            if total_sol_balance > MIN_SOL_THRESHOLD and price and state['position'] > 0:
+            # Tiered Sell Logic (Already Modified to Use Balance)
+            if total_sol_balance > MIN_SOL_THRESHOLD and price:
                 multiplier = 1.1 if macd_line < 0 else 0.9
-                if rsi is not None and rsi > 65 and state['position'] > 0:
-                    amount_to_sell = state['position'] * 0.3
+                if rsi is not None and rsi > 65:
+                    amount_to_sell = (total_sol_balance - MIN_SOL_THRESHOLD) * 0.3
                     if amount_to_sell > 0:
-                        log(f"Selling 30% due to RSI 65 ({rsi:.2f})")
+                        log(f"Selling 30% of available SOL due to RSI 65 ({rsi:.2f})")
                         old_sol_balance = sol_balance
                         old_usdc_balance = usdc_balance
                         execute_sell(amount_to_sell, price)
@@ -1082,17 +1093,19 @@ def main():
                             expected_sol = old_sol_balance - amount_to_sell
                             expected_usdc = old_usdc_balance + (amount_to_sell * price * (1 - 0.002))
                             if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
-                                state['position'] -= amount_to_sell
+                                if state['position'] == 0:  # First sell sets initial position
+                                    state['position'] = sol_balance_after
+                                    state['entry_price'] = price
                                 state['trade_cooldown_until'] = current_time + 180  # 3-min cooldown for RSI 65
                                 last_sol_balance = sol_balance_after
                                 last_usdc_balance = usdc_balance_after
                                 state['last_sol_balance'] = sol_balance_after
                                 state['last_usdc_balance'] = usdc_balance_after
                                 log(f"New position after RSI 65 sell: {state['position']:.4f} SOL")
-                if rsi is not None and rsi > 70 and state['position'] > 0 and current_time >= state['trade_cooldown_until']:
-                    amount_to_sell = state['position'] * 0.4 / 0.7  # 40% of remaining
-                    if amount_to_sell > 0:
-                        log(f"Selling 40% due to RSI 70 ({rsi:.2f})")
+                if rsi is not None and rsi > 70 and current_time >= state['trade_cooldown_until']:
+                    amount_to_sell = (total_sol_balance - MIN_SOL_THRESHOLD) * 0.4 / 0.7  # 40% of remaining
+                    if amount_to_sell > 0 and amount_to_sell <= total_sol_balance - MIN_SOL_THRESHOLD:
+                        log(f"Selling 40% of available SOL due to RSI 70 ({rsi:.2f})")
                         old_sol_balance = sol_balance
                         old_usdc_balance = usdc_balance
                         execute_sell(amount_to_sell, price)
@@ -1102,7 +1115,7 @@ def main():
                             expected_sol = old_sol_balance - amount_to_sell
                             expected_usdc = old_usdc_balance + (amount_to_sell * price * (1 - 0.002))
                             if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
-                                state['position'] -= amount_to_sell
+                                state['position'] = sol_balance_after  # Update position
                                 state['trade_cooldown_until'] = current_time + 900  # 15-min cooldown for RSI 70
                                 last_sol_balance = sol_balance_after
                                 last_usdc_balance = usdc_balance_after
@@ -1113,29 +1126,31 @@ def main():
                                 state['peak_market_value'] = new_portfolio_value
                                 state['peak_timestamp'] = current_time
                                 log(f"New position after RSI 70 sell: {state['position']:.4f} SOL, peak reset to ${new_portfolio_value:.2f}")
-                if (rsi is not None and rsi > 75 or (state['highest_price'] > 0 and price <= state['highest_price'] * 0.985)) and state['position'] > 0 and current_time >= state['trade_cooldown_until']:
-                    log(f"Selling remaining due to RSI 75 ({rsi:.2f}) or trailing stop ({price:.2f} < {state['highest_price']*0.985:.2f})")
-                    old_sol_balance = sol_balance
-                    old_usdc_balance = usdc_balance
-                    execute_sell(state['position'], price)
-                    time.sleep(10)
-                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                    if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                        expected_sol = old_sol_balance - state['position']
-                        expected_usdc = old_usdc_balance + (state['position'] * price * (1 - 0.002))
-                        if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
-                            state['position'] = 0
-                            state['trade_cooldown_until'] = current_time + 900  # 15-min cooldown for RSI 75 or trailing stop
-                            last_sol_balance = sol_balance_after
-                            last_usdc_balance = usdc_balance_after
-                            state['last_sol_balance'] = sol_balance_after
-                            state['last_usdc_balance'] = usdc_balance_after
-                            new_portfolio_value = get_portfolio_value(price)
-                            state['peak_portfolio'] = new_portfolio_value
-                            state['peak_market_value'] = new_portfolio_value
-                            state['peak_timestamp'] = current_time
-                            state['highest_price'] = 0
-                            log(f"Position cleared, peak reset to ${new_portfolio_value:.2f}")
+                if (rsi is not None and rsi > 75 or (state['highest_price'] > 0 and price <= state['highest_price'] * 0.985)) and current_time >= state['trade_cooldown_until']:
+                    amount_to_sell = (total_sol_balance - MIN_SOL_THRESHOLD) * 0.3 / 0.7  # 30% of remaining
+                    if amount_to_sell > 0 and amount_to_sell <= total_sol_balance - MIN_SOL_THRESHOLD:
+                        log(f"Selling remaining SOL due to RSI 75 ({rsi:.2f}) or trailing stop ({price:.2f} < {state['highest_price']*0.985:.2f})")
+                        old_sol_balance = sol_balance
+                        old_usdc_balance = usdc_balance
+                        execute_sell(amount_to_sell, price)
+                        time.sleep(10)
+                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
+                        if portfolio_value_after and sol_balance_after and usdc_balance_after:
+                            expected_sol = old_sol_balance - amount_to_sell
+                            expected_usdc = old_usdc_balance + (amount_to_sell * price * (1 - 0.002))
+                            if abs(sol_balance_after - expected_sol) <= 0.0001 and abs(usdc_balance_after - expected_usdc) <= 0.1:
+                                state['position'] = sol_balance_after  # Update position
+                                state['trade_cooldown_until'] = current_time + 900  # 15-min cooldown for RSI 75 or trailing stop
+                                last_sol_balance = sol_balance_after
+                                last_usdc_balance = usdc_balance_after
+                                state['last_sol_balance'] = sol_balance_after
+                                state['last_usdc_balance'] = usdc_balance_after
+                                new_portfolio_value = get_portfolio_value(price)
+                                state['peak_portfolio'] = new_portfolio_value
+                                state['peak_market_value'] = new_portfolio_value
+                                state['peak_timestamp'] = current_time
+                                state['highest_price'] = 0
+                                log(f"Position cleared, peak reset to ${new_portfolio_value:.2f}")
 
             if current_time - last_stats_time >= 4 * 3600:
                 log_performance(portfolio_value)
