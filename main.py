@@ -1013,7 +1013,7 @@ def main():
                     if position_size > 0:
                         total_position_after_buy = total_sol_balance + position_size
                         if total_position_after_buy <= MAX_POSITION_SOL:
-                            if rsi <= 35:
+                            if rsi <= 35 and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                                 buy_amount = position_size
                                 cost = buy_amount * price * (1 + 0.002)
                                 if cost <= total_usdc_balance:
@@ -1025,7 +1025,7 @@ def main():
                                         state['trade_cooldown_until'] = current_time + 180
                                         save_state()
                                         log(f"Bought full position ({buy_amount:.4f} SOL) at RSI 35, new position: {state['position']:.4f} SOL")
-                            elif rsi <= 30:
+                            elif rsi <= 30 and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                                 buy_amount = max_buy_sol
                                 cost = buy_amount * price * (1 + 0.002)
                                 if cost <= total_usdc_balance:
@@ -1048,7 +1048,7 @@ def main():
                 else:
                     MIN_SELL_AMOUNT = 0.01
                     sellable_sol = total_sol_balance - MIN_SOL_THRESHOLD
-                    if rsi > 65:
+                    if rsi > 65 and state['position'] > MIN_SELL_AMOUNT and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                         amount_to_sell = state['position']
                         if amount_to_sell > MIN_SELL_AMOUNT:
                             log(f"Selling full position ({amount_to_sell:.6f} SOL) due to RSI 65")
@@ -1060,7 +1060,7 @@ def main():
                                 state['trade_cooldown_until'] = current_time + 900
                                 save_state()
                                 log(f"Full position sold at RSI 65, new position: {state['position']:.4f} SOL")
-                    elif rsi > 70:
+                    elif rsi > 70 and sellable_sol > MIN_SELL_AMOUNT and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                         amount_to_sell = total_sol_balance - 0.01
                         if amount_to_sell > MIN_SELL_AMOUNT:
                             log(f"Selling full portfolio ({amount_to_sell:.6f} SOL) due to RSI 70")
