@@ -1043,7 +1043,7 @@ def main():
                 current_time = time.time()
                 if current_time < state['trade_cooldown_until']:
                     log(f"Skipping sell, on cooldown until {time.strftime('%H:%M:%S', time.localtime(state['trade_cooldown_until']))}")
-                elif state['position'] <= MIN_SOL_THRESHOLD:
+                elif state['position'] < MIN_SOL_THRESHOLD:
                     log(f"Skipping sell, position {state['position']:.6f} SOL is too low")
                 else:
                     MIN_SELL_AMOUNT = 0.01
