@@ -834,7 +834,7 @@ def main():
                         log(f"Reset peak_portfolio and peak_market_value to ${portfolio_value:.2f} after long pause")
                     save_state()
                 else:
-                    rsi = calculate_rsi(state['rsi_price_history']) if len(state['rsi_price_history']) >= 15 else None
+                    rsi = calculate_rsi(state['rsi_price_history']) if len(state['rsi_price_history'] >= 15) else None
                     if rsi is not None and rsi > 50 and remaining_pause > 6 * 3600:
                         state['pause_until'] = current_time + 6 * 3600
                         log("RSI > 50, reducing pause to 6 hours")
@@ -1060,10 +1060,10 @@ def main():
                                 state['trade_cooldown_until'] = current_time + 900
                                 save_state()
                                 log(f"Full position sold at RSI 65, new position: {state['position']:.4f} SOL")
-                    elif rsi > 70 and sellable_sol > MIN_SELL_AMOUNT and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
+                    elif rsi > 70 and sellable_sol > MIN_SELL_AMOUNT and macd_line < signal_line:  # Bearish condition
                         amount_to_sell = total_sol_balance - 0.01
                         if amount_to_sell > MIN_SELL_AMOUNT:
-                            log(f"Selling full portfolio ({amount_to_sell:.6f} SOL) due to RSI 70")
+                            log(f"Selling full portfolio ({amount_to_sell:.6f} SOL) due to RSI 70 and MACD < signal")
                             execute_sell(amount_to_sell, price)
                             time.sleep(10)
                             portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
