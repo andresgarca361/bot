@@ -1038,7 +1038,7 @@ def main():
                                         save_state()
                                         log(f"Bought full portfolio ({buy_amount:.4f} SOL) at RSI 30, new position: {state['position']:.4f} SOL")
 
-            # Tiered Sell Logic (Full Sell at RSI 70)
+            # Tiered Sell Logic (Bearish Conditions)
             if total_sol_balance > MIN_SOL_THRESHOLD and price:
                 current_time = time.time()
                 if current_time < state['trade_cooldown_until']:
@@ -1048,10 +1048,10 @@ def main():
                 else:
                     MIN_SELL_AMOUNT = 0.01
                     sellable_sol = total_sol_balance - MIN_SOL_THRESHOLD
-                    if rsi > 65 and state['position'] > MIN_SELL_AMOUNT and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
+                    if rsi > 65 and state['position'] > MIN_SELL_AMOUNT and macd_line < signal_line:  # Bearish condition
                         amount_to_sell = state['position']
                         if amount_to_sell > MIN_SELL_AMOUNT:
-                            log(f"Selling full position ({amount_to_sell:.6f} SOL) due to RSI 65")
+                            log(f"Selling full position ({amount_to_sell:.6f} SOL) due to RSI 65 and MACD < signal")
                             execute_sell(amount_to_sell, price)
                             time.sleep(10)
                             portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
