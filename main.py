@@ -739,7 +739,8 @@ def load_state():
     except Exception as e:
         log(f"Failed to load state: {e}")
 def main():
-    global TRADE_INTERVAL
+    global TRADE_INTERVAL, MAX_POSITION_SOL
+    MAX_POSITION_SOL = 1.0  # Increased to allow larger positions
     log("Entering main loop...")
     if 'peak_timestamp' not in state:
         state['peak_timestamp'] = time.time()
@@ -749,6 +750,8 @@ def main():
         state['rsi_price_history'] = []
     if 'position' not in state:
         state['position'] = 0
+    if 'last_buy_price' not in state:
+        state['last_buy_price'] = 0
     save_state()
 
     # Validate and reset state on startup
@@ -834,7 +837,7 @@ def main():
                         log(f"Reset peak_portfolio and peak_market_value to ${portfolio_value:.2f} after long pause")
                     save_state()
                 else:
-                    rsi = calculate_rsi(state['rsi_price_history']) if len(state['rsi_price_history'] >= 15) else None
+                    rsi = calculate_rsi(state['rsi_price_history']) if len(state['rsi_price_history']) >= 15 else None
                     if rsi is not None and rsi > 50 and remaining_pause > 6 * 3600:
                         state['pause_until'] = current_time + 6 * 3600
                         log("RSI > 50, reducing pause to 6 hours")
@@ -922,10 +925,10 @@ def main():
 
             cooldown_duration = 900  # Default 15-minute cooldown
             if atr is not None and avg_atr is not None and avg_atr > 0:
-                TRADE_INTERVAL = max(5, min(45, 60 * (avg_atr / atr)))
+                TRADE_INTERVAL = max(2, min(45, 60 * (avg_atr / atr)))  # Reduced minimum to 2s
                 if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 66)):
-                    TRADE_INTERVAL = 4
-                    cooldown_duration = 900
+                    TRADE_INTERVAL = 2
+                    cooldown_duration = 300  # Reduced to 5min for high volatility
                 elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
                     TRADE_INTERVAL = 60
                 log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s, Cooldown: {cooldown_duration//60} min")
@@ -998,7 +1001,7 @@ def main():
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            # Tiered Buy Logic (Full Buy at RSI 30)
+            # Tiered Buy Logic (Bullish Conditions)
             if current_time >= state['trade_cooldown_until']:
                 total_usdc_balance = get_usdc_balance()
                 if total_usdc_balance is None:
@@ -1007,36 +1010,38 @@ def main():
                     continue
                 if check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                     position_size = calculate_position_size(portfolio_value, atr, avg_atr)
-                    max_buy_usdc = total_usdc_balance * 0.9
-                    max_buy_sol = max_buy_usdc / (price * (1 + 0.002))
+                    max_buy_usdc = total_usdc_balance * 0.5 if rsi <= 35 else total_usdc_balance * 0.9  # 50% at RSI 35, 90% at RSI 30
+                    max_buy_sol = max_buy_usdc / (price * (1 + 0.001))  # Adjusted fee to 0.1%
                     position_size = min(position_size, max_buy_sol)
                     if position_size > 0:
                         total_position_after_buy = total_sol_balance + position_size
                         if total_position_after_buy <= MAX_POSITION_SOL:
                             if rsi <= 35 and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                                 buy_amount = position_size
-                                cost = buy_amount * price * (1 + 0.002)
+                                cost = buy_amount * price * (1 + 0.001)
                                 if cost <= total_usdc_balance:
                                     execute_buy(buy_amount)
                                     time.sleep(10)
                                     portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                                     if portfolio_value_after and sol_balance_after and usdc_balance_after:
                                         state['position'] = sol_balance_after
-                                        state['trade_cooldown_until'] = current_time + 180
+                                        state['trade_cooldown_until'] = current_time + 120  # 2 minutes
+                                        state['last_buy_price'] = price
                                         save_state()
-                                        log(f"Bought full position ({buy_amount:.4f} SOL) at RSI 35, new position: {state['position']:.4f} SOL")
+                                        log(f"Bought {buy_amount:.4f} SOL at RSI 35, new position: {state['position']:.4f} SOL, Net profit: $0.00")
                             elif rsi <= 30 and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
                                 buy_amount = max_buy_sol
-                                cost = buy_amount * price * (1 + 0.002)
+                                cost = buy_amount * price * (1 + 0.001)
                                 if cost <= total_usdc_balance:
                                     execute_buy(buy_amount)
                                     time.sleep(10)
                                     portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                                     if portfolio_value_after and sol_balance_after and usdc_balance_after:
                                         state['position'] = max(0.01, sol_balance_after)  # Ensure 0.01 SOL reserve
-                                        state['trade_cooldown_until'] = current_time + 900
+                                        state['trade_cooldown_until'] = current_time + 300  # 5 minutes
+                                        state['last_buy_price'] = price
                                         save_state()
-                                        log(f"Bought full portfolio ({buy_amount:.4f} SOL) at RSI 30, new position: {state['position']:.4f} SOL")
+                                        log(f"Bought full portfolio ({buy_amount:.4f} SOL) at RSI 30, new position: {state['position']:.4f} SOL, Net profit: $0.00")
 
             # Tiered Sell Logic (Bearish Conditions)
             if total_sol_balance > MIN_SOL_THRESHOLD and price:
@@ -1048,7 +1053,7 @@ def main():
                 else:
                     MIN_SELL_AMOUNT = 0.01
                     sellable_sol = total_sol_balance - MIN_SOL_THRESHOLD
-                    if rsi > 65 and state['position'] > MIN_SELL_AMOUNT and macd_line < signal_line:  # Bearish condition
+                    if rsi > 65 and state['position'] > MIN_SELL_AMOUNT and macd_line < signal_line:
                         amount_to_sell = state['position']
                         if amount_to_sell > MIN_SELL_AMOUNT:
                             log(f"Selling full position ({amount_to_sell:.6f} SOL) due to RSI 65 and MACD < signal")
@@ -1057,10 +1062,10 @@ def main():
                             portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                             if portfolio_value_after and sol_balance_after and usdc_balance_after:
                                 state['position'] = sol_balance_after
-                                state['trade_cooldown_until'] = current_time + 900
+                                state['trade_cooldown_until'] = current_time + 120  # 2 minutes
                                 save_state()
-                                log(f"Full position sold at RSI 65, new position: {state['position']:.4f} SOL")
-                    elif rsi > 70 and sellable_sol > MIN_SELL_AMOUNT and macd_line < signal_line:  # Bearish condition
+                                log(f"Full position sold at RSI 65, new position: {state['position']:.4f} SOL, Net profit: ${(price - state['last_buy_price']) * amount_to_sell - (0.001 * price * amount_to_sell * 2):.2f}")
+                    elif rsi > 70 and sellable_sol > MIN_SELL_AMOUNT and macd_line < signal_line:
                         amount_to_sell = total_sol_balance - 0.01
                         if amount_to_sell > MIN_SELL_AMOUNT:
                             log(f"Selling full portfolio ({amount_to_sell:.6f} SOL) due to RSI 70 and MACD < signal")
@@ -1069,9 +1074,9 @@ def main():
                             portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
                             if portfolio_value_after and sol_balance_after and usdc_balance_after:
                                 state['position'] = sol_balance_after
-                                state['trade_cooldown_until'] = current_time + 900
+                                state['trade_cooldown_until'] = current_time + 300  # 5 minutes
                                 save_state()
-                                log(f"Full portfolio sold at RSI 70, new position: {state['position']:.4f} SOL")
+                                log(f"Full portfolio sold at RSI 70, new position: {state['position']:.4f} SOL, Net profit: ${(price - state['last_buy_price']) * amount_to_sell - (0.001 * price * amount_to_sell * 2):.2f}")
 
             if current_time - last_stats_time >= 4 * 3600:
                 log_performance(portfolio_value)
@@ -1086,7 +1091,6 @@ def main():
             log(f"Error in main loop, continuing: {e}")
             time.sleep(TRADE_INTERVAL)
             continue
-
 def tcp_health_check():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
