@@ -740,7 +740,7 @@ def load_state():
         log(f"Failed to load state: {e}")
 def main():
     global TRADE_INTERVAL, MAX_POSITION_SOL
-    MAX_POSITION_SOL = 1.0  # Increased to allow larger positions
+    MAX_POSITION_SOL = 10.0  # Increased to 10.0 for aggressive scaling
     log("Entering main loop...")
     if 'peak_timestamp' not in state:
         state['peak_timestamp'] = time.time()
@@ -752,9 +752,10 @@ def main():
         state['position'] = 0
     if 'last_buy_price' not in state:
         state['last_buy_price'] = 0
+    if 'trailing_stop_price' not in state:
+        state['trailing_stop_price'] = 0
     save_state()
 
-    # Validate and reset state on startup
     current_time = time.time()
     last_save_time = os.path.getmtime('state.json') if os.path.exists('state.json') else 0
     if last_save_time > 0 and current_time - last_save_time > 48 * 3600:
@@ -763,28 +764,25 @@ def main():
     if price:
         portfolio_value = get_portfolio_value(price)
         if state.get('peak_portfolio', 0) == 0 or abs(state['peak_portfolio'] - portfolio_value) / portfolio_value > 0.5:
-            log(f"Resetting peak_portfolio from ${state.get('peak_portfolio', 0):.2f} to ${portfolio_value:.2f}")
+            log(f"Resetting peak_portfolio to ${portfolio_value:.2f}")
             state['peak_portfolio'] = portfolio_value
             state['peak_timestamp'] = current_time
         if state.get('pause_until', 0) > current_time and (current_time - state['peak_timestamp'] > 6 * 3600 or last_save_time == 0):
-            log(f"Clearing stale pause_until {state.get('pause_until', 0)} as it’s outdated")
+            log(f"Clearing stale pause_until")
             state['pause_until'] = 0
         save_state()
 
     if current_time - state['peak_timestamp'] > 604800:
-        log(f"Peak portfolio ${state['peak_portfolio']:.2f} is over 7 days old, resetting")
-        if price is None:
-            price = state.get('last_price', state['price_history'][-1] if state['price_history'] else None)
+        log(f"Peak portfolio over 7 days old, resetting to ${portfolio_value:.2f}")
         if price:
             portfolio_value = get_portfolio_value(price)
             state['peak_portfolio'] = portfolio_value
             state['peak_timestamp'] = current_time
             save_state()
 
-    # Sync rsi_price_history with price_history after initialization
     if state['price_history'] and not state['rsi_price_history']:
         state['rsi_price_history'] = state['price_history'][-34:]
-        log(f"Initialized rsi_price_history with {len(state['rsi_price_history'])} prices from price_history")
+        log(f"Initialized rsi_price_history with {len(state['rsi_price_history'])} prices")
 
     last_stats_time = time.time()
     last_indicator_time = 0
@@ -801,7 +799,7 @@ def main():
     last_usdc_balance = state.get('last_usdc_balance', 0.0)
     peak_market_value = state.get('peak_market_value', 0.0)
 
-    def get_updated_portfolio(price, max_retries=3, wait_time=3):
+    def get_updated_portfolio(price, max_retries=3, wait_time=2):
         for attempt in range(max_retries):
             sol_balance = get_sol_balance()
             usdc_balance = get_usdc_balance()
@@ -809,12 +807,12 @@ def main():
                 portfolio = usdc_balance + (sol_balance * price)
                 expected_portfolio = last_usdc_balance + (last_sol_balance * price)
                 if abs(portfolio - expected_portfolio) > 0.1 and attempt < max_retries - 1:
-                    log(f"Portfolio mismatch: Expected ${expected_portfolio:.2f}, got ${portfolio:.2f}, retrying (attempt {attempt + 1}/{max_retries})")
+                    log(f"Portfolio mismatch, retrying (attempt {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                     continue
-                log(f"Portfolio fetch: SOL={sol_balance:.4f}, USDC={usdc_balance:.4f}, Value=${portfolio:.2f}")
+                log(f"Portfolio: SOL={sol_balance:.4f}, USDC={usdc_balance:.4f}, Value=${portfolio:.2f}")
                 return portfolio, sol_balance, usdc_balance
-        log(f"Failed to fetch consistent portfolio after {max_retries} attempts")
+        log(f"Failed to fetch portfolio after {max_retries} attempts")
         return None, None, None
 
     while True:
@@ -823,60 +821,49 @@ def main():
             current_time = time.time()
             log("Loop iteration...")
 
-            max_pause_duration = 48 * 3600
             if current_time < state['pause_until']:
                 remaining_pause = state['pause_until'] - current_time
-                if state['pause_until'] - state['peak_timestamp'] > max_pause_duration:
-                    log(f"Pause exceeded max duration of 48 hours, resuming")
+                if state['pause_until'] - state['peak_timestamp'] > 48 * 3600:
+                    log("Pause exceeded 48 hours, resuming")
                     state['pause_until'] = 0
                     if price:
                         portfolio_value = get_portfolio_value(price)
                         state['peak_portfolio'] = portfolio_value
-                        state['peak_market_value'] = portfolio_value
                         state['peak_timestamp'] = current_time
-                        log(f"Reset peak_portfolio and peak_market_value to ${portfolio_value:.2f} after long pause")
                     save_state()
                 else:
-                    rsi = calculate_rsi(state['rsi_price_history']) if len(state['rsi_price_history']) >= 15 else None
-                    if rsi is not None and rsi > 50 and remaining_pause > 6 * 3600:
-                        state['pause_until'] = current_time + 6 * 3600
-                        log("RSI > 50, reducing pause to 6 hours")
-                        save_state()
                     log(f"Paused until {time.strftime('%H:%M:%S', time.localtime(state['pause_until']))}")
                     time.sleep(TRADE_INTERVAL)
                     continue
             else:
                 if state['pause_until'] != 0:
-                    log("Pause time passed, resuming trading")
+                    log("Resume trading after pause")
                     state['pause_until'] = 0
                     if price:
                         portfolio_value = get_portfolio_value(price)
                         state['peak_portfolio'] = portfolio_value
-                        state['peak_market_value'] = portfolio_value
                         state['peak_timestamp'] = current_time
-                        log(f"Reset peak_portfolio and peak_market_value to ${portfolio_value:.2f} after pause ended")
                     save_state()
 
             price = fetch_current_price()
             if price is None:
-                if not state['price_history']:
-                    log("No price history available, cannot proceed without a price")
+                if state['price_history']:
+                    price = state['price_history'][-1]
+                    log(f"Using last price: ${price:.2f}")
+                else:
+                    log("No price data, skipping")
                     time.sleep(TRADE_INTERVAL)
                     continue
-                price = state['price_history'][-1]
-                log(f"Price fetch failed, using last known price from history: ${price:.2f}")
             state['last_price'] = price
             state['price_history'].append(price)
             if len(state['price_history']) > 200:
                 state['price_history'].pop(0)
 
-            # Add price to rsi_price_history only every minute
             if 'last_rsi_price_time' not in locals():
                 last_rsi_price_time = 0
-            if current_time - last_rsi_price_time >= 60:
+            if current_time - last_rsi_price_time >= 15:  # 15s for rapid updates
                 state['rsi_price_history'].append(price)
                 last_rsi_price_time = current_time
-                log(f"Added price ${price:.2f} to rsi_price_history at {time.strftime('%H:%M:%S')}")
                 if len(state['rsi_price_history']) > 200:
                     state['rsi_price_history'].pop(0)
 
@@ -890,12 +877,11 @@ def main():
                 log(f"Failed to save price history: {e}")
 
             if len(state['price_history']) < 34 or len(set(state['price_history'][-34:])) < 2:
-                log(f"Waiting for price data: {len(state['price_history'])}/34 prices collected, or insufficient variation")
-                log(f"Last 34 prices: {[round(p, 2) for p in state['price_history'][-34:]]}")
+                log(f"Waiting for price data: {len(state['price_history'])}/34")
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            if current_time - last_indicator_time >= 60 or any(x is None for x in [cached_rsi, cached_macd_line, cached_signal_line, cached_vwap, cached_upper_bb, cached_lower_bb, cached_atr, cached_momentum, cached_avg_atr]):
+            if current_time - last_indicator_time >= 15 or any(x is None for x in [cached_rsi, cached_macd_line, cached_signal_line, cached_vwap, cached_upper_bb, cached_lower_bb, cached_atr, cached_momentum, cached_avg_atr]):
                 rsi = get_current_rsi()
                 macd_line, signal_line = calculate_macd(state['price_history'])
                 vwap = calculate_vwap(state['price_history'])
@@ -919,25 +905,18 @@ def main():
                 atr, momentum, avg_atr = cached_atr, cached_momentum, cached_avg_atr
 
             if any(x is None for x in [rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr]):
-                log("Indicators not ready or invalid, skipping trade logic")
+                log("Indicators invalid, skipping")
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            cooldown_duration = 900  # Default 15-minute cooldown
-            if atr is not None and avg_atr is not None and avg_atr > 0:
-                TRADE_INTERVAL = max(2, min(45, 60 * (avg_atr / atr)))  # Reduced minimum to 2s
-                if atr > 2 * avg_atr or (rsi is not None and (rsi < 35 or rsi > 66)):
-                    TRADE_INTERVAL = 2
-                    cooldown_duration = 300  # Reduced to 5min for high volatility
-                elif atr < 0.5 * avg_atr or (rsi is not None and 40 <= rsi <= 60):
-                    TRADE_INTERVAL = 60
-                log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s, Cooldown: {cooldown_duration//60} min")
-            else:
-                log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s (default), Cooldown: {cooldown_duration//60} min")
+            TRADE_INTERVAL = max(1, min(10, 15 * (avg_atr / (atr + 0.1))))  # 1-10s
+            if atr > 2 * avg_atr or abs(momentum) > 5:
+                TRADE_INTERVAL = 1  # Ultra-fast in high volatility
+            log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s")
 
-            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=10)
+            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=2)
             if portfolio_value is None:
-                log("Skipping iteration due to portfolio fetch failure")
+                log("Portfolio fetch failed, skipping")
                 time.sleep(TRADE_INTERVAL)
                 continue
             if sol_balance is not None and usdc_balance is not None:
@@ -957,17 +936,13 @@ def main():
                     peak_market_value = peak_market_value_with_current_holdings
                     state['peak_market_value'] = peak_market_value
                 market_drawdown = (peak_market_value - current_market_value) / peak_market_value * 100 if peak_market_value > 0 else 0
-                market_drawdown_usd = peak_market_value - current_market_value
-            else:
-                market_drawdown = 0
-                market_drawdown_usd = 0
 
             if portfolio_value > 0:
                 if state.get('peak_portfolio', 0) == 0 or abs(state.get('peak_portfolio', 0) - portfolio_value) / portfolio_value > 0.5:
                     state['peak_portfolio'] = portfolio_value
                     state['peak_timestamp'] = current_time
                     state['peak_market_value'] = portfolio_value
-                    log(f"Reset peak_portfolio and peak_market_value to current value: ${portfolio_value:.2f}")
+                    log(f"Reset peak_portfolio to ${portfolio_value:.2f}")
                 elif portfolio_value > state['peak_portfolio']:
                     state['peak_portfolio'] = portfolio_value
                     state['peak_timestamp'] = current_time
@@ -975,110 +950,66 @@ def main():
                     log(f"Peak portfolio updated to ${portfolio_value:.2f}")
             save_state()
 
-            log(f"Portfolio: ${portfolio_value:.2f}, Market Drawdown: {market_drawdown:.2f}% (${market_drawdown_usd:.2f})")
-            atr_adjust = atr * 2 if atr else 0
-            pause_threshold = max(10, min(20, 10 + (portfolio_value * 0.0001) + atr_adjust))
-            min_usd_loss = 5.0
-            price_momentum = (price - state['price_history'][-10]) / state['price_history'][-10] * 100 if len(state['price_history']) >= 10 else 0
-            log(f"Pause check: market_drawdown={market_drawdown:.2f}%, pause_threshold={pause_threshold:.2f}%, market_drawdown_usd=${market_drawdown_usd:.2f}, min_usd_loss=${min_usd_loss:.2f}, price_momentum={price_momentum:.2f}%")
-            if market_drawdown > pause_threshold and market_drawdown_usd >= min_usd_loss and price_momentum < 2.0:
-                pause_duration = 6 * 3600 if rsi and rsi > 50 else 48 * 3600
-                state['pause_until'] = current_time + pause_duration
-                state['peak_timestamp'] = current_time
-                log(f"Pausing due to market drawdown: {market_drawdown:.2f}% > {pause_threshold:.2f}% and loss ${market_drawdown_usd:.2f} >= ${min_usd_loss:.2f}, pausing for {pause_duration/3600} hours")
+            log(f"Portfolio: ${portfolio_value:.2f}, Market Drawdown: {market_drawdown:.2f}%")
+            if market_drawdown > MAX_DRAWDOWN:
+                log(f"Drawdown {market_drawdown:.2f}% > {MAX_DRAWDOWN}%, pausing for 1 hour")
+                state['pause_until'] = current_time + 3600
                 save_state()
                 continue
 
             adjust_triggers(atr, avg_atr, rsi)
-            if not price:
-                log("No valid price, skipping trade logic")
-                time.sleep(TRADE_INTERVAL)
-                continue
-
             total_sol_balance = get_sol_balance()
-            if total_sol_balance is None:
-                log("Failed to fetch SOL balance, skipping trade logic")
-                time.sleep(TRADE_INTERVAL)
-                continue
+            total_usdc_balance = get_usdc_balance()
 
-            # Tiered Buy Logic (Bullish Conditions)
-            if current_time >= state['trade_cooldown_until']:
-                total_usdc_balance = get_usdc_balance()
-                if total_usdc_balance is None:
-                    log("Failed to fetch USDC balance, skipping buy logic")
-                    time.sleep(TRADE_INTERVAL)
-                    continue
-                if check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
-                    position_size = calculate_position_size(portfolio_value, atr, avg_atr)
-                    max_buy_usdc = total_usdc_balance * 0.5 if rsi <= 35 else total_usdc_balance * 0.9  # 50% at RSI 35, 90% at RSI 30
-                    max_buy_sol = max_buy_usdc / (price * (1 + 0.001))  # Adjusted fee to 0.1%
-                    position_size = min(position_size, max_buy_sol)
-                    if position_size > 0:
-                        total_position_after_buy = total_sol_balance + position_size
-                        if total_position_after_buy <= MAX_POSITION_SOL:
-                            if rsi <= 35 and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
-                                buy_amount = position_size
-                                cost = buy_amount * price * (1 + 0.001)
-                                if cost <= total_usdc_balance:
-                                    execute_buy(buy_amount)
-                                    time.sleep(10)
-                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                                    if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                        state['position'] = sol_balance_after
-                                        state['trade_cooldown_until'] = current_time + 120  # 2 minutes
-                                        state['last_buy_price'] = price
-                                        save_state()
-                                        log(f"Bought {buy_amount:.4f} SOL at RSI 35, new position: {state['position']:.4f} SOL, Net profit: $0.00")
-                            elif rsi <= 30 and check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
-                                buy_amount = max_buy_sol
-                                cost = buy_amount * price * (1 + 0.001)
-                                if cost <= total_usdc_balance:
-                                    execute_buy(buy_amount)
-                                    time.sleep(10)
-                                    portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                                    if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                        state['position'] = max(0.01, sol_balance_after)  # Ensure 0.01 SOL reserve
-                                        state['trade_cooldown_until'] = current_time + 300  # 5 minutes
-                                        state['last_buy_price'] = price
-                                        save_state()
-                                        log(f"Bought full portfolio ({buy_amount:.4f} SOL) at RSI 30, new position: {state['position']:.4f} SOL, Net profit: $0.00")
-
-            # Tiered Sell Logic (Bearish Conditions)
-            if total_sol_balance > MIN_SOL_THRESHOLD and price:
-                current_time = time.time()
-                if current_time < state['trade_cooldown_until']:
-                    log(f"Skipping sell, on cooldown until {time.strftime('%H:%M:%S', time.localtime(state['trade_cooldown_until']))}")
-                elif state['position'] < MIN_SOL_THRESHOLD:
-                    log(f"Skipping sell, position {state['position']:.6f} SOL is too low")
-                else:
-                    MIN_SELL_AMOUNT = 0.01
-                    sellable_sol = total_sol_balance - MIN_SOL_THRESHOLD
-                    if rsi > 65 and state['position'] > MIN_SELL_AMOUNT and macd_line < signal_line:
-                        amount_to_sell = state['position']
-                        if amount_to_sell > MIN_SELL_AMOUNT:
-                            log(f"Selling full position ({amount_to_sell:.6f} SOL) due to RSI 65 and MACD < signal")
-                            execute_sell(amount_to_sell, price)
-                            time.sleep(10)
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
+            # Buy Logic: Full deployment on uptrend switch
+            if current_time >= state['trade_cooldown_until'] and total_usdc_balance > MIN_TRADE_USD:
+                price_momentum = (price - state['price_history'][-5]) / state['price_history'][-5] * 100 if len(state['price_history']) >= 5 else 0
+                prev_momentum = (state['price_history'][-5] - state['price_history'][-10]) / state['price_history'][-10] * 100 if len(state['price_history']) >= 10 else 0
+                if (prev_momentum < -2 and price_momentum > 3 and rsi < 50) or (rsi < 30 and price_momentum > 5):
+                    position_size = min(total_usdc_balance / price, MAX_POSITION_SOL - state['position'])
+                    if position_size > 0.01:
+                        cost = position_size * price * (1 + 0.0005)  # 0.05% fee
+                        if cost <= total_usdc_balance:
+                            execute_buy(position_size)
+                            time.sleep(2)
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=2)
                             if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                state['position'] = sol_balance_after
-                                state['trade_cooldown_until'] = current_time + 120  # 2 minutes
+                                state['position'] += position_size
+                                state['last_buy_price'] = price
+                                state['trade_cooldown_until'] = current_time + 15  # 15s cooldown
+                                state['trailing_stop_price'] = price * (1 - STOP_LOSS_DROP / 100)
+                                state['highest_price'] = price
                                 save_state()
-                                log(f"Full position sold at RSI 65, new position: {state['position']:.4f} SOL, Net profit: ${(price - state['last_buy_price']) * amount_to_sell - (0.001 * price * amount_to_sell * 2):.2f}")
-                    elif rsi > 70 and sellable_sol > MIN_SELL_AMOUNT and macd_line < signal_line:
-                        amount_to_sell = total_sol_balance - 0.01
-                        if amount_to_sell > MIN_SELL_AMOUNT:
-                            log(f"Selling full portfolio ({amount_to_sell:.6f} SOL) due to RSI 70 and MACD < signal")
-                            execute_sell(amount_to_sell, price)
-                            time.sleep(10)
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=10)
-                            if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                state['position'] = sol_balance_after
-                                state['trade_cooldown_until'] = current_time + 300  # 5 minutes
-                                save_state()
-                                log(f"Full portfolio sold at RSI 70, new position: {state['position']:.4f} SOL, Net profit: ${(price - state['last_buy_price']) * amount_to_sell - (0.001 * price * amount_to_sell * 2):.2f}")
+                                log(f"Bought {position_size:.4f} SOL, Total Position: {state['position']:.4f} SOL, Net Profit: $0.00")
 
-            if current_time - last_stats_time >= 4 * 3600:
+            # Sell Logic: Scale out with trailing stop
+            if total_sol_balance > MIN_SOL_THRESHOLD and state['position'] > 0:
+                profit_percent = ((price - state['last_buy_price']) / state['last_buy_price'] * 100) if state['last_buy_price'] else 0
+                if price > state['highest_price']:
+                    state['highest_price'] = price
+                    state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - TRAILING_STOP / 100)) if profit_percent > 3.5 else price * (1 - STOP_LOSS_DROP / 100)
+                if price <= state['trailing_stop_price'] or (rsi > 75 and macd_line < signal_line):
+                    sell_amount = state['position'] * 0.25 if profit_percent < 5 else state['position'] * 0.5 if profit_percent < 15 else state['position']
+                    sell_amount = max(0.01, min(sell_amount, state['position']))
+                    if sell_amount > 0:
+                        execute_sell(sell_amount, price)
+                        time.sleep(2)
+                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=2)
+                        if portfolio_value_after and sol_balance_after and usdc_balance_after:
+                            state['position'] -= sell_amount
+                            profit = (price - state['last_buy_price']) * sell_amount - (0.0005 * price * sell_amount * 2)
+                            state['total_profit'] += profit
+                            state['trade_cooldown_until'] = current_time + 15  # 15s cooldown
+                            save_state()
+                            log(f"Sold {sell_amount:.4f} SOL, Remaining: {state['position']:.4f} SOL, Net Profit: ${profit:.2f}")
+                    if state['position'] <= 0.01:
+                        state['position'] = 0
+                        state['highest_price'] = 0
+                        state['trailing_stop_price'] = 0
+                        save_state()
+                        log("Position fully closed")
+
+            if current_time - last_stats_time >= 3600:
                 log_performance(portfolio_value)
                 last_stats_time = current_time
                 save_state()
