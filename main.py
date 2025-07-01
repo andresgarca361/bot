@@ -743,8 +743,10 @@ def main():
     MAX_POSITION_SOL = 25.0  # Capacity for massive uptrends
     API_REQUEST_LIMIT = 5  # Max requests per second (adjust for your RPC, e.g., QuickNode free tier)
     REQUEST_WINDOW = 1.0  # 1-second window
+
+    # Initialize request tracking within function scope
     request_count = 0
-    last_request_time = time.time()  # Initialized globally
+    last_request_time = time.time()
 
     log("Entering main loop...")
     if 'peak_timestamp' not in state:
