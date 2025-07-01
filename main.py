@@ -741,12 +741,7 @@ def load_state():
 def main():
     global TRADE_INTERVAL, MAX_POSITION_SOL
     MAX_POSITION_SOL = 25.0  # Capacity for massive uptrends
-    API_REQUEST_LIMIT = 10  # Adjusted to QuickNode free tier (10 req/s), modify based on your RPC
-    REQUEST_WINDOW = 1.0  # 1-second window
-
-    # Initialize request tracking within function scope
-    request_count = 0
-    last_request_time = time.time()
+    TRADE_INTERVAL = 0.25  # Adjusted to ~4 req/s for Helius free tier, ensuring 0.25 req/loop
 
     log("Entering main loop...")
     if 'peak_timestamp' not in state:
@@ -806,18 +801,7 @@ def main():
     last_usdc_balance = state.get('last_usdc_balance', 0.0)
     peak_market_value = state.get('peak_market_value', 0.0)
 
-    def get_updated_portfolio(price, max_retries=3, wait_time=0.5):
-        global request_count, last_request_time
-        current_time = time.time()
-        if current_time - last_request_time >= REQUEST_WINDOW:
-            request_count = 0
-            last_request_time = current_time
-        request_count += 1
-        if request_count > API_REQUEST_LIMIT:
-            log(f"API limit reached ({API_REQUEST_LIMIT} req/s), pausing for 1s")
-            time.sleep(1)
-            request_count = 1
-            last_request_time = current_time
+    def get_updated_portfolio(price, max_retries=3, wait_time=0.25):
         for attempt in range(max_retries):
             sol_balance = get_sol_balance()
             usdc_balance = get_usdc_balance()
@@ -832,20 +816,6 @@ def main():
                 return portfolio, sol_balance, usdc_balance
         log(f"Failed to fetch portfolio after {max_retries} attempts")
         return None, None, None
-
-    def fetch_with_limit(func):
-        global request_count, last_request_time
-        current_time = time.time()
-        if current_time - last_request_time >= REQUEST_WINDOW:
-            request_count = 0
-            last_request_time = current_time
-        request_count += 1
-        if request_count > API_REQUEST_LIMIT:
-            log(f"API limit reached ({API_REQUEST_LIMIT} req/s), pausing for 1s")
-            time.sleep(1)
-            request_count = 1
-            last_request_time = current_time
-        return func()
 
     while True:
         try:
@@ -877,7 +847,7 @@ def main():
                         state['peak_timestamp'] = current_time
                     save_state()
 
-            price = fetch_with_limit(fetch_current_price)
+            price = fetch_current_price()
             if price is None:
                 if state['price_history']:
                     price = state['price_history'][-1]
@@ -893,7 +863,7 @@ def main():
 
             if 'last_rsi_price_time' not in locals():
                 last_rsi_price_time = 0
-            if current_time - last_rsi_price_time >= 0.5:  # 0.5s update
+            if current_time - last_rsi_price_time >= 0.25:  # Match TRADE_INTERVAL
                 state['rsi_price_history'].append(price)
                 last_rsi_price_time = current_time
                 if len(state['rsi_price_history']) > 200:
@@ -913,13 +883,13 @@ def main():
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            if current_time - last_indicator_time >= 0.5 or any(x is None for x in [cached_rsi, cached_macd_line, cached_signal_line, cached_vwap, cached_upper_bb, cached_lower_bb, cached_atr, cached_momentum, cached_avg_atr]):
-                rsi = fetch_with_limit(get_current_rsi)
-                macd_line, signal_line = fetch_with_limit(lambda: calculate_macd(state['price_history']))
-                vwap = fetch_with_limit(lambda: calculate_vwap(state['price_history']))
-                upper_bb, lower_bb = fetch_with_limit(lambda: calculate_bollinger_bands(state['price_history']))
-                atr = fetch_with_limit(lambda: calculate_atr(state['price_history']))
-                momentum = fetch_with_limit(lambda: calculate_momentum(state['price_history']))
+            if current_time - last_indicator_time >= 0.25 or any(x is None for x in [cached_rsi, cached_macd_line, cached_signal_line, cached_vwap, cached_upper_bb, cached_lower_bb, cached_atr, cached_momentum, cached_avg_atr]):
+                rsi = get_current_rsi()
+                macd_line, signal_line = calculate_macd(state['price_history'])
+                vwap = calculate_vwap(state['price_history'])
+                upper_bb, lower_bb = calculate_bollinger_bands(state['price_history'])
+                atr = calculate_atr(state['price_history'])
+                momentum = calculate_momentum(state['price_history'])
                 if atr is not None:
                     state['atr_history'].append(atr)
                     if len(state['atr_history']) > 50:
@@ -941,12 +911,12 @@ def main():
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            TRADE_INTERVAL = max(0.5, min(2, 2 * (avg_atr / (atr + 0.1))))  # 0.5-2s, safe for API
+            TRADE_INTERVAL = 0.25  # Fixed to match Helius free tier 4 req/s
             if atr > 0.8 * avg_atr or abs(momentum) > 0.8:
-                TRADE_INTERVAL = 0.5  # Reduce only if needed
-            log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s, API Requests: {request_count}/{API_REQUEST_LIMIT}")
+                TRADE_INTERVAL = 0.25  # Maintains limit safety
+            log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s")
 
-            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=0.5)
+            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=0.25)
             if portfolio_value is None:
                 log("Portfolio fetch failed, skipping")
                 time.sleep(TRADE_INTERVAL)
@@ -995,7 +965,7 @@ def main():
 
             # Buy Logic: EagleEye detection
             if current_time >= state['trade_cooldown_until'] and total_usdc_balance > MIN_TRADE_USD:
-                avg_rsi = np.mean([fetch_with_limit(get_current_rsi) for _ in range(50)]) if len(state['rsi_price_history']) >= 50 else 50
+                avg_rsi = np.mean([get_current_rsi() for _ in range(50)]) if len(state['rsi_price_history']) >= 50 else 50
                 target_rsi = avg_rsi - 2 if price < vwap else avg_rsi + 2  # Adjust based on trend
                 price_momentum = (price - state['price_history'][-5]) / state['price_history'][-5] * 100 if len(state['price_history']) >= 5 else 0
                 prev_momentum = (state['price_history'][-5] - state['price_history'][-10]) / state['price_history'][-10] * 100 if len(state['price_history']) >= 10 else 0
@@ -1005,8 +975,8 @@ def main():
                         cost = position_size * price * (1 + 0.0005)
                         if cost <= total_usdc_balance:
                             execute_buy(position_size)
-                            time.sleep(0.5)
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=0.5)
+                            time.sleep(0.25)
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=0.25)
                             if portfolio_value_after and sol_balance_after and usdc_balance_after:
                                 state['position'] += position_size
                                 state['last_buy_price'] = price
@@ -1027,8 +997,8 @@ def main():
                     sell_amount = max(0.001, min(sell_amount, state['position']))
                     if sell_amount > 0:
                         execute_sell(sell_amount, price)
-                        time.sleep(0.5)
-                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=0.5)
+                        time.sleep(0.25)
+                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=0.25)
                         if portfolio_value_after and sol_balance_after and usdc_balance_after:
                             state['position'] -= sell_amount
                             profit = (price - state['last_buy_price']) * sell_amount - (0.0005 * price * sell_amount * 2)
