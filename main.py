@@ -741,7 +741,7 @@ def load_state():
 def main():
     global TRADE_INTERVAL, MAX_POSITION_SOL
     MAX_POSITION_SOL = 25.0  # Capacity for massive uptrends
-    API_REQUEST_LIMIT = 5  # Max requests per second (adjust for your RPC, e.g., QuickNode free tier)
+    API_REQUEST_LIMIT = 10  # Adjusted to QuickNode free tier (10 req/s), modify based on your RPC
     REQUEST_WINDOW = 1.0  # 1-second window
 
     # Initialize request tracking within function scope
