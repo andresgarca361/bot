@@ -741,10 +741,11 @@ def load_state():
 def main():
     global TRADE_INTERVAL, MAX_POSITION_SOL
     MAX_POSITION_SOL = 25.0  # Capacity for massive uptrends
-    API_REQUEST_LIMIT = 5  # Max requests per second (adjust based on your API, e.g., QuickNode free tier)
+    API_REQUEST_LIMIT = 5  # Max requests per second (adjust for your RPC, e.g., QuickNode free tier)
     REQUEST_WINDOW = 1.0  # 1-second window
     request_count = 0
-    last_request_time = time.time()
+    last_request_time = time.time()  # Initialized globally
+
     log("Entering main loop...")
     if 'peak_timestamp' not in state:
         state['peak_timestamp'] = time.time()
@@ -996,7 +997,7 @@ def main():
                 target_rsi = avg_rsi - 2 if price < vwap else avg_rsi + 2  # Adjust based on trend
                 price_momentum = (price - state['price_history'][-5]) / state['price_history'][-5] * 100 if len(state['price_history']) >= 5 else 0
                 prev_momentum = (state['price_history'][-5] - state['price_history'][-10]) / state['price_history'][-10] * 100 if len(state['price_history']) >= 10 else 0
-                if (prev_momentum < -0.5 * avg_atr and price_momentum > 0.3 * avg_atr and rsi < target_rsi) or (macd_line > signal_line and price > lower_bb):
+                if (prev_momentum < -0.5 * avg_atr and price_momentum > 0.2 * avg_atr and rsi < target_rsi) or (macd_line > signal_line and price > lower_bb):
                     position_size = min(total_usdc_balance / price, MAX_POSITION_SOL - state['position'])
                     if position_size > 0.001:
                         cost = position_size * price * (1 + 0.0005)
