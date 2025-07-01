@@ -741,7 +741,7 @@ def load_state():
 def main():
     global TRADE_INTERVAL, MAX_POSITION_SOL
     MAX_POSITION_SOL = 25.0  # Capacity for massive uptrends
-    TRADE_INTERVAL = 0.25  # Adjusted to ~4 req/s for Helius free tier, ensuring 0.25 req/loop
+    TRADE_INTERVAL = 0.30  # Adjusted to ~3.33 req/s for Helius free tier safety
 
     log("Entering main loop...")
     if 'peak_timestamp' not in state:
@@ -801,7 +801,7 @@ def main():
     last_usdc_balance = state.get('last_usdc_balance', 0.0)
     peak_market_value = state.get('peak_market_value', 0.0)
 
-    def get_updated_portfolio(price, max_retries=3, wait_time=0.25):
+    def get_updated_portfolio(price, max_retries=3, wait_time=0.30):
         for attempt in range(max_retries):
             sol_balance = get_sol_balance()
             usdc_balance = get_usdc_balance()
@@ -863,7 +863,7 @@ def main():
 
             if 'last_rsi_price_time' not in locals():
                 last_rsi_price_time = 0
-            if current_time - last_rsi_price_time >= 0.25:  # Match TRADE_INTERVAL
+            if current_time - last_rsi_price_time >= 0.30:  # Match TRADE_INTERVAL
                 state['rsi_price_history'].append(price)
                 last_rsi_price_time = current_time
                 if len(state['rsi_price_history']) > 200:
@@ -883,7 +883,7 @@ def main():
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            if current_time - last_indicator_time >= 0.25 or any(x is None for x in [cached_rsi, cached_macd_line, cached_signal_line, cached_vwap, cached_upper_bb, cached_lower_bb, cached_atr, cached_momentum, cached_avg_atr]):
+            if current_time - last_indicator_time >= 0.30 or any(x is None for x in [cached_rsi, cached_macd_line, cached_signal_line, cached_vwap, cached_upper_bb, cached_lower_bb, cached_atr, cached_momentum, cached_avg_atr]):
                 rsi = get_current_rsi()
                 macd_line, signal_line = calculate_macd(state['price_history'])
                 vwap = calculate_vwap(state['price_history'])
@@ -901,6 +901,7 @@ def main():
                 cached_vwap, cached_upper_bb, cached_lower_bb = vwap, upper_bb, lower_bb
                 cached_atr, cached_momentum, cached_avg_atr = atr, momentum, avg_atr
                 last_indicator_time = current_time
+                log(f"Indicators Updated - Current RSI: {rsi:.2f}, MACD Line: {macd_line:.2f}, Signal Line: {signal_line:.2f}, VWAP: {vwap:.2f}, Upper BB: {upper_bb:.2f}, Lower BB: {lower_bb:.2f}, ATR: {atr:.2f}, Momentum: {momentum:.2f}, Avg ATR: {avg_atr:.2f}")
             else:
                 rsi, macd_line, signal_line = cached_rsi, cached_macd_line, cached_signal_line
                 vwap, upper_bb, lower_bb = cached_vwap, cached_upper_bb, cached_lower_bb
@@ -911,12 +912,12 @@ def main():
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            TRADE_INTERVAL = 0.25  # Fixed to match Helius free tier 4 req/s
+            TRADE_INTERVAL = 0.30  # Fixed to ensure Helius 4 req/s limit safety
             if atr > 0.8 * avg_atr or abs(momentum) > 0.8:
-                TRADE_INTERVAL = 0.25  # Maintains limit safety
+                TRADE_INTERVAL = 0.30  # Maintains limit safety
             log(f"TRADE_INTERVAL: {TRADE_INTERVAL}s")
 
-            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=0.25)
+            portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=0.30)
             if portfolio_value is None:
                 log("Portfolio fetch failed, skipping")
                 time.sleep(TRADE_INTERVAL)
@@ -966,7 +967,7 @@ def main():
             # Buy Logic: EagleEye detection
             if current_time >= state['trade_cooldown_until'] and total_usdc_balance > MIN_TRADE_USD:
                 avg_rsi = np.mean([get_current_rsi() for _ in range(50)]) if len(state['rsi_price_history']) >= 50 else 50
-                target_rsi = avg_rsi - 2 if price < vwap else avg_rsi + 2  # Adjust based on trend
+                target_rsi = avg_rsi - 2 if price < vwap else avg_rsi + 2  # Based on mean RSI
                 price_momentum = (price - state['price_history'][-5]) / state['price_history'][-5] * 100 if len(state['price_history']) >= 5 else 0
                 prev_momentum = (state['price_history'][-5] - state['price_history'][-10]) / state['price_history'][-10] * 100 if len(state['price_history']) >= 10 else 0
                 if (prev_momentum < -0.5 * avg_atr and price_momentum > 0.2 * avg_atr and rsi < target_rsi) or (macd_line > signal_line and price > lower_bb):
@@ -975,15 +976,15 @@ def main():
                         cost = position_size * price * (1 + 0.0005)
                         if cost <= total_usdc_balance:
                             execute_buy(position_size)
-                            time.sleep(0.25)
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=0.25)
+                            time.sleep(0.30)
+                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=0.30)
                             if portfolio_value_after and sol_balance_after and usdc_balance_after:
                                 state['position'] += position_size
                                 state['last_buy_price'] = price
                                 state['trade_cooldown_until'] = current_time + 2
                                 state['trailing_stop_price'] = price * (1 - 0.03 * (avg_atr / atr if atr > 0 else 1))  # Dynamic stop
                                 state['highest_price'] = price
-                                log(f"Bought {position_size:.4f} SOL, Total Position: {state['position']:.4f} SOL, Target RSI: {target_rsi:.2f}, Net Profit: $0.00")
+                                log(f"Bought {position_size:.4f} SOL, Total Position: {state['position']:.4f} SOL, Current RSI: {rsi:.2f}, Target RSI: {target_rsi:.2f}, Net Profit: $0.00")
                                 save_state()
 
             # Sell Logic: Hold for 25%+, scale on small moves
@@ -997,14 +998,14 @@ def main():
                     sell_amount = max(0.001, min(sell_amount, state['position']))
                     if sell_amount > 0:
                         execute_sell(sell_amount, price)
-                        time.sleep(0.25)
-                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=0.25)
+                        time.sleep(0.30)
+                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=0.30)
                         if portfolio_value_after and sol_balance_after and usdc_balance_after:
                             state['position'] -= sell_amount
                             profit = (price - state['last_buy_price']) * sell_amount - (0.0005 * price * sell_amount * 2)
                             state['total_profit'] += profit
                             state['trade_cooldown_until'] = current_time + 2
-                            log(f"Sold {sell_amount:.4f} SOL, Remaining: {state['position']:.4f} SOL, Target RSI: {target_rsi:.2f}, Net Profit: ${profit:.2f}")
+                            log(f"Sold {sell_amount:.4f} SOL, Remaining: {state['position']:.4f} SOL, Current RSI: {rsi:.2f}, Target RSI: {target_rsi:.2f}, Net Profit: ${profit:.2f}")
                             save_state()
                     if state['position'] <= 0.001:
                         state['position'] = 0
