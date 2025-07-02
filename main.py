@@ -721,8 +721,8 @@ def main():
     global TRADE_INTERVAL, MAX_POSITION_SOL, BASE_BUY_TRIGGER, BASE_SELL_TRIGGER
     MAX_POSITION_SOL = 25.0  # Capacity for massive uptrends
     TRADE_INTERVAL = 30  # Adjusted to 30s for EagleEye
-    BASE_BUY_TRIGGER = 3.0  # Aligned with eagle profit target
-    BASE_SELL_TRIGGER = 3.0  # Aligned with eagle profit target, adjustable per timeframe
+    BASE_BUY_TRIGGER = 3.0  # Base value, overridden per timeframe
+    BASE_SELL_TRIGGER = 3.0  # Base value, overridden per timeframe
 
     log(f"Entering main loop at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
     if 'peak_timestamp' not in state:
@@ -937,6 +937,11 @@ def main():
                     prices = state[f'rsi_price_history_{timeframe}']
                     indicators = cached_indicators[timeframe]
                     indicators['rsi'] = get_current_rsi(prices) if len(prices) >= 20 else 50.0
+                    rsi_values = [get_current_rsi(prices[i:i+14]) for i in range(len(prices)-14) if i+14 <= len(prices)]
+                    if timeframe == 'eagle' and len(rsi_values) >= 20:
+                        indicators['avg_rsi'] = np.mean(rsi_values[-20:])  # 20 * 14-period RSI values (~10min)
+                    else:
+                        indicators['avg_rsi'] = 50.0  # Default for non-Eagle or insufficient data
                     macd_result = calculate_macd(prices) if len(prices) >= 34 else (None, None)
                     indicators['macd_line'], indicators['signal_line'] = macd_result
                     indicators['vwap'] = calculate_vwap(prices) if len(prices) >= 20 else None
@@ -1023,7 +1028,12 @@ def main():
                     ind = cached_indicators[timeframe]
                     fee = get_fee_estimate()
                     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
-                    if check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr']):
+                    # Custom RSI condition for EagleEye
+                    if timeframe == 'eagle':
+                        rsi_condition = ind['rsi'] < ind['avg_rsi'] - 5 if ind['avg_rsi'] is not None else False
+                    else:
+                        rsi_condition = ind['rsi'] < 35
+                    if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr']):
                         position_size = min(calculate_position_size(portfolio_value, ind['atr'], ind['avg_atr']) * buy_factor, MAX_POSITION_SOL - state['position'])
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + fee) <= total_usdc_balance and bid_ask_spread < 0.005:
                             execute_buy(position_size)
@@ -1045,6 +1055,8 @@ def main():
                 for timeframe, sell_factor, profit_target in [('eagle', 0.2, 3), ('medium', 0.3, 10), ('long', 0.5, 25)]:
                     ind = cached_indicators[timeframe]
                     sell_condition = (price <= state['trailing_stop_price'] or (ind['macd_line'] < ind['signal_line'] and profit_percent > profit_target / 2) or profit_percent >= profit_target)
+                    if timeframe == 'eagle':
+                        sell_condition = (price <= state['trailing_stop_price'] or (ind['macd_line'] < ind['signal_line'] and profit_percent > 1.0) or profit_percent >= 2.0)
                     if timeframe == 'medium' and not (cached_indicators['long']['rsi'] < 50 or profit_percent >= 10):
                         sell_condition = False
                     if sell_condition and state['sell_targets']:
@@ -1075,34 +1087,6 @@ def main():
             log(f"Error in main loop, continuing: {str(e)}")
             time.sleep(TRADE_INTERVAL)
             continue
-
-def set_sell_targets(position_size, entry_price):
-    log(f"Setting sell targets for {position_size:.4f} SOL")
-    if position_size < 1:
-        state['sell_targets'] = [
-            (position_size * 0.5, entry_price * 1.02),  # 50% at 2% above entry
-            (position_size * 0.3, entry_price * 1.05),  # 30% at 5% above entry
-            (position_size * 0.2, entry_price * 1.08)   # 20% at 8% above entry
-        ]
-    else:
-        state['sell_targets'] = [
-            (position_size * 0.4, entry_price * 1.02),  # 40% at 2% above entry
-            (position_size * 0.4, entry_price * 1.05),  # 40% at 5% above entry
-            (position_size * 0.2, entry_price * 1.08)   # 20% at 8% above entry
-        ]
-    log(f"Sell targets: {state['sell_targets']}")
-
-def log_performance(portfolio_value):
-    log("Logging performance...")
-    try:
-        with open('stats.csv', 'a') as f:
-            win_rate = state['wins'] / state['total_trades'] * 100 if state['total_trades'] > 0 else 0
-            profit_factor = state['total_profit'] / abs(sum(t for t in state['recent_trades'] if t < 0)) if any(t < 0 for t in state['recent_trades']) else float('inf')
-            drawdown = (state['peak_portfolio'] - portfolio_value) / state['peak_portfolio'] * 100 if state['peak_portfolio'] > 0 else 0
-            f.write(f"{time.time()},{portfolio_value},{state['total_trades']},{state['wins']},{state['losses']},{state['total_profit']},{win_rate},{profit_factor},{drawdown}\n")
-        log(f"Stats: Trades={state['total_trades']}, WinRate={win_rate:.2f}%, Profit=${state['total_profit']:.2f}, Drawdown={drawdown:.2f}%")
-    except Exception as e:
-        log(f"Failed to log performance: {e}")
 
 # Ensure get_current_rsi supports custom period (already updated)
 def tcp_health_check():
