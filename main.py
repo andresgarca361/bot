@@ -778,6 +778,14 @@ def main():
         log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices")
         log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices")
 
+        # Precompute warmup indicators for eagle
+        if len(state['rsi_price_history_eagle']) >= 34:
+            rsi_values = [get_current_rsi(state['rsi_price_history_eagle'][max(0, i):i+14], period=14) for i in range(max(0, len(state['rsi_price_history_eagle'])-14), len(state['rsi_price_history_eagle'])) if i >= 14]
+            if rsi_values:
+                state['eagle_avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else np.mean(rsi_values)
+            else:
+                state['eagle_avg_rsi'] = 50.0
+
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
         save_state()
@@ -818,7 +826,7 @@ def main():
     last_stats_time = time.time()
     last_indicator_time = {'eagle': 0, 'medium': 0, 'long': 0}
     cached_indicators = {
-        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_rsi': 50.0, 'avg_atr': 2.5},
+        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_rsi': state.get('eagle_avg_rsi', 50.0), 'avg_atr': 2.5},
         'medium': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5},
         'long': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5}
     }
@@ -941,12 +949,8 @@ def main():
                     indicators = cached_indicators[timeframe]
                     log(f"Processing {timeframe} with {len(prices)} prices")
                     indicators['rsi'] = get_current_rsi(prices, period=14) if len(prices) >= 14 else 50.0  # 14-period RSI
-                    if timeframe == 'eagle' and len(prices) >= 34:
-                        rsi_values = [get_current_rsi(prices[max(0, i):i+14], period=14) for i in range(max(0, len(prices)-14), len(prices)) if i >= 14]
-                        indicators['avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else np.mean(rsi_values) if rsi_values else 50.0
-                        log(f"Eagle avg_rsi: {indicators['avg_rsi']:.2f} with {len(rsi_values)} values")
-                    else:
-                        indicators['avg_rsi'] = 50.0
+                    if timeframe == 'eagle':
+                        indicators['avg_rsi'] = state.get('eagle_avg_rsi', 50.0)
                     macd_result = calculate_macd(prices) if len(prices) >= 34 else (None, None)
                     indicators['macd_line'], indicators['signal_line'] = macd_result
                     indicators['vwap'] = calculate_vwap(prices) if len(prices) >= 20 else None
