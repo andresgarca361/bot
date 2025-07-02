@@ -742,7 +742,9 @@ def main():
     if 'trailing_stop_price' not in state:
         state['trailing_stop_price'] = 0
     if 'eagle_avg_rsi' not in state:
-        state['eagle_avg_rsi'] = None  # Will be set after data fetch
+        state['eagle_avg_rsi'] = None  # Will be set as average of last 20 RSI values
+    if 'rsi_history_eagle' not in state:
+        state['rsi_history_eagle'] = []  # To store last 20 RSI values for averaging
     save_state()
 
     # Fetch initial prices from CryptoCompare for extended period (1000 minutes)
@@ -766,8 +768,8 @@ def main():
             raise RuntimeError("Not enough historical data for RSI")
         initial_prices = [c["close"] for c in candles if c.get("close") is not None and not np.isnan(c["close"])]
         initial_prices = initial_prices[-1000:]  # Last 1000 minutes
-        if len(initial_prices) < 14:
-            log(f"Insufficient valid closes: {len(initial_prices)}/14")
+        if len(initial_prices) < 34:  # Need at least 34 for 20 RSI periods + buffer
+            log(f"Insufficient valid closes: {len(initial_prices)}/34")
             raise RuntimeError("Invalid or incomplete close data for RSI")
         state['price_history'] = initial_prices
         state['last_price'] = initial_prices[-1]
@@ -781,20 +783,27 @@ def main():
         log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices")
         log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices")
 
-        # Precompute warmup indicators for eagle using last 14 prices
+        # Precompute initial eagle_avg_rsi as average of last 20 RSI values
         RSI_PERIOD = 14
-        last_n_prices = state['rsi_price_history_eagle'][-RSI_PERIOD:]
-        log(f"Last 14 prices for RSI: {last_n_prices}")
-        rsi_value = get_current_rsi(last_n_prices, period=RSI_PERIOD)
-        if rsi_value is None or np.isnan(rsi_value):
-            log(f"RSI calculation failed, using last valid prices")
-            valid_prices = [p for p in state['rsi_price_history_eagle'] if p is not None and not np.isnan(p)][-RSI_PERIOD:]
-            rsi_value = get_current_rsi(valid_prices, period=RSI_PERIOD)
-            if rsi_value is None or np.isnan(rsi_value):
-                log(f"Still failed, defaulting to 50.0")
-                rsi_value = 50.0
-        state['eagle_avg_rsi'] = rsi_value
-        log(f"Precomputed Eagle avg_rsi: {state['eagle_avg_rsi']:.2f} from last {RSI_PERIOD} prices")
+        if len(initial_prices) >= 34:  # Ensure enough data for 20 RSI calculations
+            rsi_values = []
+            for i in range(len(initial_prices) - 34, len(initial_prices) - 14):  # Last 20 periods
+                prices_slice = initial_prices[i:i + RSI_PERIOD]
+                rsi = get_current_rsi(prices_slice, period=RSI_PERIOD)
+                if rsi is not None and not np.isnan(rsi):
+                    rsi_values.append(rsi)
+            if rsi_values:
+                state['eagle_avg_rsi'] = np.mean(rsi_values)
+                state['rsi_history_eagle'] = rsi_values[-20:]  # Initialize with last 20
+                log(f"Precomputed Eagle avg_rsi: {state['eagle_avg_rsi']:.2f} from {len(rsi_values)} RSI values")
+            else:
+                log(f"No valid RSI values computed, defaulting to 50.0")
+                state['eagle_avg_rsi'] = 50.0
+                state['rsi_history_eagle'] = [50.0] * 20
+        else:
+            log(f"Insufficient prices for initial RSI average ({len(initial_prices)}/34), defaulting to 50.0")
+            state['eagle_avg_rsi'] = 50.0
+            state['rsi_history_eagle'] = [50.0] * 20
 
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
@@ -807,6 +816,7 @@ def main():
         state['rsi_price_history_medium'] = [state['price_history'][i] for i in range(0, 1000, 10)]
         state['rsi_price_history_long'] = [state['price_history'][i] for i in range(0, 1000, 15)]
         state['eagle_avg_rsi'] = 50.0
+        state['rsi_history_eagle'] = [50.0] * 20
         log(f"Fallback initial price set to ${state['last_price']:.2f}, avg_rsi set to {state['eagle_avg_rsi']:.2f}")
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
@@ -849,7 +859,7 @@ def main():
         for attempt in range(max_retries):
             try:
                 sol_balance = get_sol_balance()
-                us annex dc_balance = get_usdc_balance()
+                usdc_balance = get_usdc_balance()
                 if sol_balance is not None and usdc_balance is not None:
                     portfolio = usdc_balance + (sol_balance * price)
                     expected_portfolio = last_usdc_balance + (last_sol_balance * price)
@@ -942,7 +952,7 @@ def main():
             if current_time - last_indicator_time['medium'] >= 600:
                 state['rsi_price_history_medium'].append(price)
             if current_time - last_indicator_time['long'] >= 900:
-                state['rsi_price_history_long']. ATAappend(price)
+                state['rsi_price_history_long'].append(price)
 
             state['last_fetch_time'] = current_time
             save_state()
@@ -960,8 +970,14 @@ def main():
                     indicators = cached_indicators[timeframe]
                     log(f"Processing {timeframe} with {len(prices)} prices")
                     indicators['rsi'] = get_current_rsi(prices, period=RSI_PERIOD) if len(prices) >= RSI_PERIOD else 50.0
-                    if timeframe == 'eagle':
-                        indicators['avg_rsi'] = state['eagle_avg_rsi']  # Use precomputed value
+                    if timeframe == 'eagle' and indicators['rsi'] is not None and not np.isnan(indicators['rsi']):
+                        state['rsi_history_eagle'].append(indicators['rsi'])
+                        if len(state['rsi_history_eagle']) > 20:
+                            state['rsi_history_eagle'].pop(0)
+                        state['eagle_avg_rsi'] = np.mean(state['rsi_history_eagle'])
+                        indicators['avg_rsi'] = state['eagle_avg_rsi']
+                    elif timeframe == 'eagle':
+                        indicators['avg_rsi'] = state['eagle_avg_rsi'] or 50.0
                     macd_result = calculate_macd(prices) if len(prices) >= 34 else (None, None)
                     indicators['macd_line'], indicators['signal_line'] = macd_result
                     indicators['vwap'] = calculate_vwap(prices) if len(prices) >= 20 else None
@@ -973,7 +989,7 @@ def main():
                         state[f'atr_history_{timeframe}'] = state.get(f'atr_history_{timeframe}', []) + [indicators['atr']]
                         if len(state[f'atr_history_{timeframe}']) > 50:
                             state[f'atr_history_{timeframe}'].pop(0)
-                        indicators['avg_atr'] = np.mean(state[f'atr_history_{timeframe}']) if state[f'atr_history_{timeframe}'] else 2.5
+                        indicators['avg_atr'] = np.mean(state[f'atr_history_{timeframe}']) if state[f'atr_history_eagle'] else 2.5
                     else:
                         indicators['avg_atr'] = 2.5
                     last_indicator_time[timeframe] = current_time
@@ -1015,7 +1031,7 @@ def main():
                     peak_market_value = peak_market_value_with_current_holdings
                     state['peak_market_value'] = peak_market_value
                 market_drawdown = (peak_market_value - current_market_value) / peak_market_value * 100 if peak_market_value > 0 else 0
-                log(f"Market metrics - Current Value: ${current_market_value:.2f}, Peak Value: ${peak_market_value:.2f}, Drawdown: {market_draw=down:.2f}%")
+                log(f"Market metrics - Current Value: ${current_market_value:.2f}, Peak Value: ${peak_market_value:.2f}, Drawdown: {market_drawdown:.2f}%")
 
             if portfolio_value > 0:
                 if state.get('peak_portfolio', 0) == 0 or abs(state.get('peak_portfolio', 0) - portfolio_value) / portfolio_value > 0.5:
