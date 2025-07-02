@@ -308,45 +308,24 @@ def get_fee_estimate():
     return state['cached_fee']
 
 # Indicator Functions
-def get_current_rsi():
-    required_prices = 20  # Updated to match new period
-
-    # Check if we have enough prices in state['rsi_price_history']
-    if len(state['rsi_price_history']) >= required_prices + 1:  # Need 21 prices for 20-period RSI
-        log(f"Using existing RSI price history with {len(state['rsi_price_history'])} prices")
-        log(f"Last 21 prices for RSI: {state['rsi_price_history'][-21:]}")
-        rsi = calculate_rsi(state['rsi_price_history'][- (required_prices + 1):])  # Slice last 21 prices
-        log(f"Current RSI calculated: {rsi:.2f}")
-        return rsi
-
-    # Collect 21 minutes of price data if not enough
-    log("Not enough RSI price history, starting to collect 21 minutes of price data...")
-    prices = []
-    start_time = time.time()
-    target_end_time = start_time + ((required_prices + 1) * 60)  # Collect 21 prices
-
-    while len(prices) < required_prices + 1 and time.time() < target_end_time:
-        price = fetch_current_price()
-        if price:
-            prices.append(price)
-            log(f"Fetched price {len(prices)}/{required_prices + 1}: ${price:.2f} at {time.strftime('%H:%M:%S', time.localtime())}")
-            time.sleep(60)
-        else:
-            log("Price fetch failed, retrying in 5 seconds...")
-            time.sleep(5)
-            price = fetch_current_price()
-            if price:
-                prices.append(price)
-                log(f"Retry fetched price {len(prices)}/{required_prices + 1}: ${price:.2f}")
-                time.sleep(60)
-
-    if len(prices) < required_prices + 1:
-        log(f"ERROR: Only collected {len(prices)} prices, need {required_prices + 1}")
-        return None
-
-    state['rsi_price_history'] = prices[-(required_prices + 1):]  # Update rsi_price_history with the last 21 prices
-    rsi = calculate_rsi(state['rsi_price_history'])
-    log(f"Current RSI calculated: {rsi:.2f}")
+def get_current_rsi(prices, period=20):
+    if len(prices) < period + 1:
+        log("Not enough prices for RSI calculation, returning 50.0")
+        return 50.0
+    prices = np.array(prices)
+    deltas = np.diff(prices)
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+    avg_gain = np.mean(gains[:period]) if period <= len(gains) else 0
+    avg_loss = np.mean(losses[:period]) if period <= len(losses) else 0
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    if avg_loss < 0.0001:
+        avg_loss = 0.0001
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    log(f"Current RSI calculated: {rsi:.2f} with period {period}")
     return rsi
 
 def calculate_rsi(prices, period=20):  # Increased from 14 to 20
@@ -762,21 +741,62 @@ def main():
         state['trailing_stop_price'] = 0
     save_state()
 
-    # Fetch initial prices
-    log("Fetching initial prices from API at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
-    initial_price = fetch_current_price()
-    if initial_price is None:
-        log("Failed to fetch initial price, using fallback at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
-        initial_price = 150.0  # Fallback price (e.g., approximate SOL value)
-    state['price_history'].append(initial_price)
-    state['last_price'] = initial_price
-    log(f"Initial price fetched: ${initial_price:.2f} at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+    # Fetch initial prices from CryptoCompare for all timeframes (300 minutes)
+    log("Fetching initial prices from CryptoCompare at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+    API_KEY = os.getenv("CMC_KEY")
+    if not API_KEY:
+        log("ERROR: CMC_KEY (used as CryptoCompare API key) is not set")
+        raise RuntimeError("CryptoCompare API key not found")
+    url = "https://min-api.cryptocompare.com/data/v2/histominute"
+    params = {"fsym": "SOL", "tsym": "USD", "limit": 300, "api_key": API_KEY}  # 5 hours (300 minutes)
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("Response") != "Success":
+            log(f"CryptoCompare returned error: {data.get('Message')}")
+            raise RuntimeError("CryptoCompare response not successful")
+        candles = data.get("Data", {}).get("Data", [])
+        if len(candles) < 20:  # Ensure at least 20 periods
+            log(f"Insufficient data from CryptoCompare: {len(candles)}/20")
+            raise RuntimeError("Not enough historical data")
+        initial_prices = [c["close"] for c in candles if c.get("close") is not None][-300:]  # Last 300 minutes
+        if len(initial_prices) < 20:
+            log(f"Insufficient valid closes: {len(initial_prices)}/20")
+            raise RuntimeError("Invalid or incomplete close data")
+        state['price_history'] = initial_prices
+        state['last_price'] = initial_prices[-1]
+        log(f"Initial prices fetched: {len(state['price_history'])} prices, last price ${state['last_price']:.2f} at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+
+        # Initialize timeframe-specific price histories
+        state['rsi_price_history_eagle'] = initial_prices[-20:]  # 10-min lookback (20 * 30s)
+        state['rsi_price_history_medium'] = [initial_prices[i] for i in range(0, len(initial_prices), 10)][-20:]  # 200-min lookback (20 * 600s)
+        state['rsi_price_history_long'] = [initial_prices[i] for i in range(0, len(initial_prices), 15)][-20:]  # 300-min lookback (20 * 900s)
+        log(f"Initialized rsi_price_history_eagle with {len(state['rsi_price_history_eagle'])} prices")
+        log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices")
+        log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices")
+
+        # Save initial state
+        with open('price_history.json', 'w') as f:
+            json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
+        save_state()
+    except Exception as e:
+        log(f"Failed to fetch initial prices from CryptoCompare: {e}, using fallback at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+        state['price_history'] = [150.0] * 300  # Fallback 300 prices
+        state['last_price'] = 150.0
+        state['rsi_price_history_eagle'] = state['price_history'][-20:]
+        state['rsi_price_history_medium'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 10)][-20:]
+        state['rsi_price_history_long'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 15)][-20:]
+        log(f"Fallback initial price set to ${state['last_price']:.2f} at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+        with open('price_history.json', 'w') as f:
+            json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
+        save_state()
 
     current_time = time.time()
     last_save_time = os.path.getmtime('state.json') if os.path.exists('state.json') else 0
     if last_save_time > 0 and current_time - last_save_time > 48 * 3600:
         log(f"State file older than 48 hours, resetting at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-    price = initial_price
+    price = state['last_price']
     if price:
         portfolio_value = get_portfolio_value(price)
         if state.get('peak_portfolio', 0) == 0 or abs(state['peak_portfolio'] - portfolio_value) / portfolio_value > 0.5:
@@ -795,16 +815,6 @@ def main():
             state['peak_portfolio'] = portfolio_value
             state['peak_timestamp'] = current_time
             save_state()
-
-    if state['price_history'] and not state['rsi_price_history_eagle']:
-        state['rsi_price_history_eagle'] = state['price_history'][-20:]  # 10-min lookback at 30s
-        log(f"Initialized rsi_price_history_eagle with {len(state['rsi_price_history_eagle'])} prices at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-    if state['price_history'] and not state['rsi_price_history_medium']:
-        state['rsi_price_history_medium'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 10)][-20:]  # 200-min lookback
-        log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-    if state['price_history'] and not state['rsi_price_history_long']:
-        state['rsi_price_history_long'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 15)][-20:]  # 300-min lookback
-        log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
 
     last_stats_time = time.time()
     last_indicator_time_eagle = 0
@@ -907,18 +917,15 @@ def main():
             if len(state['price_history']) > 3000:  # Increased for 15-min sampling
                 state['price_history'].pop(0)
 
-            if 'last_rsi_price_time_eagle' not in locals():
-                last_rsi_price_time_eagle = 0
-            if current_time - last_rsi_price_time_eagle >= 30:  # 30s update
+            if current_time - last_indicator_time_eagle >= 30:  # 30s update
                 state['rsi_price_history_eagle'].append(price)
-                last_rsi_price_time_eagle = current_time
                 if len(state['rsi_price_history_eagle']) > 20:  # 10-min lookback
                     state['rsi_price_history_eagle'].pop(0)
-            if current_time - last_rsi_price_time_eagle >= 600:  # 10-min update
+            if current_time - last_indicator_time_medium >= 600:  # 10-min update
                 state['rsi_price_history_medium'].append(price)
                 if len(state['rsi_price_history_medium']) > 20:  # 200-min lookback
                     state['rsi_price_history_medium'].pop(0)
-            if current_time - last_rsi_price_time_eagle >= 900:  # 15-min update
+            if current_time - last_indicator_time_long >= 900:  # 15-min update
                 state['rsi_price_history_long'].append(price)
                 if len(state['rsi_price_history_long']) > 20:  # 300-min lookback
                     state['rsi_price_history_long'].pop(0)
@@ -932,14 +939,9 @@ def main():
             except Exception as e:
                 log(f"Failed to save price history: {e} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
 
-            if len(state['price_history']) < 50 or len(set(state['price_history'][-50:])) < 2:
-                log(f"Waiting for sufficient price data: {len(state['price_history'])}/50 unique prices at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-                time.sleep(TRADE_INTERVAL)
-                continue
-
             # EagleEye indicators (30s)
             if current_time - last_indicator_time_eagle >= 30 or any(x is None for x in [cached_rsi_eagle, cached_macd_line_eagle, cached_signal_line_eagle, cached_vwap_eagle, cached_upper_bb_eagle, cached_lower_bb_eagle, cached_atr_eagle, cached_momentum_eagle, cached_avg_atr_eagle]):
-                rsi_eagle = get_current_rsi(state['rsi_price_history_eagle'], period=20)
+                rsi_eagle = get_current_rsi(state['rsi_price_history_eagle'])
                 macd_line_eagle, signal_line_eagle = calculate_macd(state['rsi_price_history_eagle'], fast=12, slow=26, signal=9)
                 vwap_eagle = calculate_vwap(state['rsi_price_history_eagle'])
                 upper_bb_eagle, lower_bb_eagle = calculate_bollinger_bands(state['rsi_price_history_eagle'])
@@ -960,7 +962,7 @@ def main():
 
             # Medium-term indicators (10min)
             if current_time - last_indicator_time_medium >= 600 or any(x is None for x in [cached_rsi_medium, cached_macd_line_medium, cached_signal_line_medium, cached_vwap_medium, cached_upper_bb_medium, cached_lower_bb_medium, cached_atr_medium, cached_momentum_medium, cached_avg_atr_medium]):
-                rsi_medium = get_current_rsi(state['rsi_price_history_medium'], period=20)
+                rsi_medium = get_current_rsi(state['rsi_price_history_medium'])
                 macd_line_medium, signal_line_medium = calculate_macd(state['rsi_price_history_medium'], fast=12, slow=26, signal=9)
                 vwap_medium = calculate_vwap(state['rsi_price_history_medium'])
                 upper_bb_medium, lower_bb_medium = calculate_bollinger_bands(state['rsi_price_history_medium'])
@@ -981,7 +983,7 @@ def main():
 
             # Long-term indicators (15min)
             if current_time - last_indicator_time_long >= 900 or any(x is None for x in [cached_rsi_long, cached_macd_line_long, cached_signal_line_long, cached_vwap_long, cached_upper_bb_long, cached_lower_bb_long, cached_atr_long, cached_momentum_long, cached_avg_atr_long]):
-                rsi_long = get_current_rsi(state['rsi_price_history_long'], period=20)
+                rsi_long = get_current_rsi(state['rsi_price_history_long'])
                 macd_line_long, signal_line_long = calculate_macd(state['rsi_price_history_long'], fast=12, slow=26, signal=9)
                 vwap_long = calculate_vwap(state['rsi_price_history_long'])
                 upper_bb_long, lower_bb_long = calculate_bollinger_bands(state['rsi_price_history_long'])
@@ -1064,7 +1066,7 @@ def main():
             # Buy Logic: All periods
             if current_time >= state['trade_cooldown_until'] and total_usdc_balance > MIN_TRADE_USD:
                 # EagleEye Buy (30s)
-                avg_rsi_eagle = np.mean([get_current_rsi(state['rsi_price_history_eagle'], period=20) for _ in range(20)]) if len(state['rsi_price_history_eagle']) >= 20 else 50
+                avg_rsi_eagle = np.mean([get_current_rsi(state['rsi_price_history_eagle']) for _ in range(20)]) if len(state['rsi_price_history_eagle']) >= 20 else 50
                 target_rsi_eagle = avg_rsi_eagle - 2 if price < cached_vwap_eagle else avg_rsi_eagle + 2
                 price_momentum = (price - state['price_history'][-5]) / state['price_history'][-5] * 100 if len(state['price_history']) >= 5 else 0
                 prev_momentum = (state['price_history'][-5] - state['price_history'][-10]) / state['price_history'][-10] * 100 if len(state['price_history']) >= 10 else 0
@@ -1087,7 +1089,7 @@ def main():
                                 save_state()
 
                 # Medium-term Buy (10min)
-                avg_rsi_medium = np.mean([get_current_rsi(state['rsi_price_history_medium'], period=20) for _ in range(20)]) if len(state['rsi_price_history_medium']) >= 20 else 50
+                avg_rsi_medium = np.mean([get_current_rsi(state['rsi_price_history_medium']) for _ in range(20)]) if len(state['rsi_price_history_medium']) >= 20 else 50
                 target_rsi_medium = avg_rsi_medium - 2 if price < cached_vwap_medium else avg_rsi_medium + 2
                 medium_buy_condition = (cached_rsi_medium < target_rsi_medium and cached_macd_line_medium > cached_signal_line_medium) or (price > cached_lower_bb_medium and cached_momentum_medium > 0.5 * cached_avg_atr_medium)
                 long_term_bullish = cached_rsi_long > 50 and cached_macd_line_long > cached_signal_line_long  # Influence from long-term
@@ -1109,7 +1111,7 @@ def main():
                                 save_state()
 
                 # Long-term Buy (15min)
-                avg_rsi_long = np.mean([get_current_rsi(state['rsi_price_history_long'], period=20) for _ in range(20)]) if len(state['rsi_price_history_long']) >= 20 else 50
+                avg_rsi_long = np.mean([get_current_rsi(state['rsi_price_history_long']) for _ in range(20)]) if len(state['rsi_price_history_long']) >= 20 else 50
                 target_rsi_long = avg_rsi_long - 2 if price < cached_vwap_long else avg_rsi_long + 2
                 long_buy_condition = (cached_rsi_long < target_rsi_long and cached_macd_line_long > cached_signal_line_long) or (price > cached_lower_bb_long and cached_momentum_long > 0.7 * cached_avg_atr_long)
                 if long_buy_condition:
@@ -1139,7 +1141,7 @@ def main():
                                                     price * (1 - 0.03 * (cached_avg_atr_eagle / cached_atr_eagle if cached_atr_eagle > 0 else 1))
 
                 # EagleEye Sell (30s)
-                eagleeye_sell_condition = price <= state['trailing_stop_price'] or (cached_macd_line_eagle < cached_signal_line_eagle and profit_percent > 1) or profit_percent >= 3  # Adjusted to 3%
+                eagleeye_sell_condition = price <= state['trailing_stop_price'] or (cached_macd_line_eagle < cached_signal_line_eagle and profit_percent > 1) or profit_percent >= 3
                 if eagleeye_sell_condition:
                     sell_amount = state['position'] * 0.1 if profit_percent < 3 else state['position'] * 0.2
                     sell_amount = max(0.001, min(sell_amount, state['position']))
@@ -1175,9 +1177,8 @@ def main():
 
                 # Long-term Sell (15min)
                 long_term_sell_condition = profit_percent >= 25 or (cached_macd_line_long < cached_signal_line_long and profit_percent > 15)
-                # Check for near-target profit (e.g., 24% as example)
                 if profit_percent >= 24 and profit_percent < 25 and cached_macd_line_long < cached_signal_line_long:
-                    long_term_sell_condition = True  # Early exit to avoid missing profits
+                    long_term_sell_condition = True
                 if long_term_sell_condition:
                     sell_amount = state['position'] * 0.5 if profit_percent < 30 else state['position']
                     sell_amount = max(0.001, min(sell_amount, state['position']))
