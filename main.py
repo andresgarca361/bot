@@ -741,6 +741,8 @@ def main():
         state['last_buy_price'] = 0
     if 'trailing_stop_price' not in state:
         state['trailing_stop_price'] = 0
+    if 'eagle_avg_rsi' not in state:
+        state['eagle_avg_rsi'] = 50.0
     save_state()
 
     # Fetch initial prices from CryptoCompare for extended period (1000 minutes)
@@ -778,13 +780,13 @@ def main():
         log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices")
         log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices")
 
-        # Precompute warmup indicators for eagle
-        if len(state['rsi_price_history_eagle']) >= 34:
-            rsi_values = [get_current_rsi(state['rsi_price_history_eagle'][max(0, i):i+14], period=14) for i in range(max(0, len(state['rsi_price_history_eagle'])-14), len(state['rsi_price_history_eagle'])) if i >= 14]
-            if rsi_values:
-                state['eagle_avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else np.mean(rsi_values)
-            else:
-                state['eagle_avg_rsi'] = 50.0
+        # Precompute warmup indicators for eagle using last 14 prices (7 minutes)
+        RSI_PERIOD = 14  # Adjustable: 14 (7 min), 20 (10 min), 30 (15 min)
+        if len(state['rsi_price_history_eagle']) >= RSI_PERIOD:
+            last_n_prices = state['rsi_price_history_eagle'][-RSI_PERIOD:]
+            rsi_value = get_current_rsi(last_n_prices, period=RSI_PERIOD)
+            state['eagle_avg_rsi'] = rsi_value
+            log(f"Precomputed Eagle avg_rsi: {state['eagle_avg_rsi']:.2f} from last {RSI_PERIOD} prices ({RSI_PERIOD * 30 // 60} minutes)")
 
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
@@ -826,7 +828,7 @@ def main():
     last_stats_time = time.time()
     last_indicator_time = {'eagle': 0, 'medium': 0, 'long': 0}
     cached_indicators = {
-        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_rsi': state.get('eagle_avg_rsi', 50.0), 'avg_atr': 2.5},
+        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_rsi': state['eagle_avg_rsi'], 'avg_atr': 2.5},
         'medium': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5},
         'long': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5}
     }
@@ -948,9 +950,9 @@ def main():
                     prices = state[f'rsi_price_history_{timeframe}']
                     indicators = cached_indicators[timeframe]
                     log(f"Processing {timeframe} with {len(prices)} prices")
-                    indicators['rsi'] = get_current_rsi(prices, period=14) if len(prices) >= 14 else 50.0  # 14-period RSI
+                    indicators['rsi'] = get_current_rsi(prices, period=RSI_PERIOD) if len(prices) >= RSI_PERIOD else 50.0  # Match RSI_PERIOD
                     if timeframe == 'eagle':
-                        indicators['avg_rsi'] = state.get('eagle_avg_rsi', 50.0)
+                        indicators['avg_rsi'] = state['eagle_avg_rsi']
                     macd_result = calculate_macd(prices) if len(prices) >= 34 else (None, None)
                     indicators['macd_line'], indicators['signal_line'] = macd_result
                     indicators['vwap'] = calculate_vwap(prices) if len(prices) >= 20 else None
@@ -966,7 +968,7 @@ def main():
                     else:
                         indicators['avg_atr'] = 2.5
                     last_indicator_time[timeframe] = current_time
-                    # Fix for formatting error
+                    # Fix for formatting error and add avg_rsi to log
                     rsi_str = f"{indicators['rsi']:.2f}" if indicators['rsi'] is not None else "N/A"
                     macd_line_str = f"{indicators['macd_line']:.2f}" if indicators['macd_line'] is not None else "N/A"
                     signal_line_str = f"{indicators['signal_line']:.2f}" if indicators['signal_line'] is not None else "N/A"
@@ -975,7 +977,8 @@ def main():
                     lower_bb_str = f"{indicators['lower_bb']:.2f}" if indicators['lower_bb'] is not None else "N/A"
                     atr_str = f"{indicators['atr']:.2f}" if indicators['atr'] is not None else "N/A"
                     momentum_str = f"{indicators['momentum']:.2f}" if indicators['momentum'] is not None else "N/A"
-                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {rsi_str}, MACD: {macd_line_str}/{signal_line_str}, VWAP: {vwap_str}, BB: {upper_bb_str}/{lower_bb_str}, ATR: {atr_str}, Momentum: {momentum_str}")
+                    avg_rsi_str = f"{indicators['avg_rsi']:.2f}" if indicators['avg_rsi'] is not None else "N/A"
+                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {rsi_str}, avg_rsi: {avg_rsi_str}, MACD: {macd_line_str}/{signal_line_str}, VWAP: {vwap_str}, BB: {upper_bb_str}/{lower_bb_str}, ATR: {atr_str}, Momentum: {momentum_str}")
 
             if any(ind is None for timeframe in cached_indicators for ind in ['rsi', 'vwap', 'upper_bb', 'lower_bb', 'atr', 'momentum'] if timeframe in cached_indicators):
                 log("Missing critical indicators, skipping")
