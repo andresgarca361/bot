@@ -952,7 +952,16 @@ def main():
                     else:
                         indicators['avg_atr'] = 2.5
                     last_indicator_time[timeframe] = current_time
-                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {indicators['rsi']:.2f if indicators['rsi'] is not None else 'N/A'}, MACD: {indicators['macd_line']:.2f if indicators['macd_line'] is not None else 'N/A'}/{indicators['signal_line']:.2f if indicators['signal_line'] is not None else 'N/A'}, VWAP: {indicators['vwap']:.2f if indicators['vwap'] is not None else 'N/A'}, BB: {indicators['upper_bb']:.2f if indicators['upper_bb'] is not None else 'N/A'}/{indicators['lower_bb']:.2f if indicators['lower_bb'] is not None else 'N/A'}, ATR: {indicators['atr']:.2f if indicators['atr'] is not None else 'N/A'}, Momentum: {indicators['momentum']:.2f if indicators['momentum'] is not None else 'N/A'}")
+                    # Fix for formatting error
+                    rsi_str = f"{indicators['rsi']:.2f}" if indicators['rsi'] is not None else "N/A"
+                    macd_line_str = f"{indicators['macd_line']:.2f}" if indicators['macd_line'] is not None else "N/A"
+                    signal_line_str = f"{indicators['signal_line']:.2f}" if indicators['signal_line'] is not None else "N/A"
+                    vwap_str = f"{indicators['vwap']:.2f}" if indicators['vwap'] is not None else "N/A"
+                    upper_bb_str = f"{indicators['upper_bb']:.2f}" if indicators['upper_bb'] is not None else "N/A"
+                    lower_bb_str = f"{indicators['lower_bb']:.2f}" if indicators['lower_bb'] is not None else "N/A"
+                    atr_str = f"{indicators['atr']:.2f}" if indicators['atr'] is not None else "N/A"
+                    momentum_str = f"{indicators['momentum']:.2f}" if indicators['momentum'] is not None else "N/A"
+                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {rsi_str}, MACD: {macd_line_str}/{signal_line_str}, VWAP: {vwap_str}, BB: {upper_bb_str}/{lower_bb_str}, ATR: {atr_str}, Momentum: {momentum_str}")
 
             if any(ind is None for timeframe in cached_indicators for ind in ['rsi', 'vwap', 'upper_bb', 'lower_bb', 'atr', 'momentum'] if timeframe in cached_indicators):
                 log("Missing critical indicators, skipping")
