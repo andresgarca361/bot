@@ -770,8 +770,8 @@ def main():
         state['last_price'] = initial_prices[-1]
         log(f"Initial prices fetched: {len(state['price_history'])} prices, last price ${state['last_price']:.2f}")
 
-        # Initialize timeframe-specific price histories with full 1000 prices initially
-        state['rsi_price_history_eagle'] = initial_prices  # Full 1000 prices for warmup
+        # Initialize timeframe-specific price histories with full initial data
+        state['rsi_price_history_eagle'] = initial_prices  # 1000 prices
         state['rsi_price_history_medium'] = [initial_prices[i] for i in range(0, len(initial_prices), 10)]  # ~100 prices
         state['rsi_price_history_long'] = [initial_prices[i] for i in range(0, len(initial_prices), 15)]  # ~67 prices
         log(f"Initialized rsi_price_history_eagle with {len(state['rsi_price_history_eagle'])} prices")
@@ -941,9 +941,9 @@ def main():
                     indicators = cached_indicators[timeframe]
                     log(f"Processing {timeframe} with {len(prices)} prices")
                     indicators['rsi'] = get_current_rsi(prices, period=14) if len(prices) >= 14 else 50.0  # 14-period RSI
-                    if timeframe == 'eagle' and len(prices) >= 34:  # 14 + 20 for avg_rsi
-                        rsi_values = [get_current_rsi(prices[i:i+14], period=14) for i in range(len(prices)-14) if i+14 <= len(prices)]
-                        indicators['avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else 50.0
+                    if timeframe == 'eagle' and len(prices) >= 34:
+                        rsi_values = [get_current_rsi(prices[max(0, i):i+14], period=14) for i in range(max(0, len(prices)-14), len(prices)) if i >= 14]
+                        indicators['avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else np.mean(rsi_values) if rsi_values else 50.0
                         log(f"Eagle avg_rsi: {indicators['avg_rsi']:.2f} with {len(rsi_values)} values")
                     else:
                         indicators['avg_rsi'] = 50.0
