@@ -763,12 +763,12 @@ def main():
             log(f"CryptoCompare returned error: {data.get('Message')}")
             raise RuntimeError("CryptoCompare response not successful")
         candles = data.get("Data", {}).get("Data", [])
-        if len(candles) < 14:
-            log(f"Insufficient data from CryptoCompare: {len(candles)}/14")
+        if len(candles) < 34:  # Need at least 34 for 20 RSI periods
+            log(f"Insufficient data from CryptoCompare: {len(candles)}/34")
             raise RuntimeError("Not enough historical data for RSI")
         initial_prices = [c["close"] for c in candles if c.get("close") is not None and not np.isnan(c["close"])]
         initial_prices = initial_prices[-1000:]  # Last 1000 minutes
-        if len(initial_prices) < 34:  # Need at least 34 for 20 RSI periods + buffer
+        if len(initial_prices) < 34:
             log(f"Insufficient valid closes: {len(initial_prices)}/34")
             raise RuntimeError("Invalid or incomplete close data for RSI")
         state['price_history'] = initial_prices
@@ -787,17 +787,20 @@ def main():
         RSI_PERIOD = 14
         if len(initial_prices) >= 34:  # Ensure enough data for 20 RSI calculations
             rsi_values = []
-            for i in range(len(initial_prices) - 34, len(initial_prices) - 14):  # Last 20 periods
+            for i in range(-14, -34, -1):  # Last 20 periods of 14 prices from end
                 prices_slice = initial_prices[i:i + RSI_PERIOD]
+                log(f"RSI slice index: {i}, length: {len(prices_slice)}, prices: {prices_slice}")
                 rsi = get_current_rsi(prices_slice, period=RSI_PERIOD)
                 if rsi is not None and not np.isnan(rsi):
                     rsi_values.append(rsi)
+                else:
+                    log(f"Invalid RSI at index {i}, value: {rsi}")
             if rsi_values:
                 state['eagle_avg_rsi'] = np.mean(rsi_values)
                 state['rsi_history_eagle'] = rsi_values[-20:]  # Initialize with last 20
-                log(f"Precomputed Eagle avg_rsi: {state['eagle_avg_rsi']:.2f} from {len(rsi_values)} RSI values")
+                log(f"Precomputed Eagle avg_rsi: {state['eagle_avg_rsi']:.2f} from {len(rsi_values)} valid RSI values")
             else:
-                log(f"No valid RSI values computed, defaulting to 50.0")
+                log(f"No valid RSI values computed from {len(initial_prices)} prices, defaulting to 50.0")
                 state['eagle_avg_rsi'] = 50.0
                 state['rsi_history_eagle'] = [50.0] * 20
         else:
@@ -822,6 +825,7 @@ def main():
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
         save_state()
 
+    # Rest of the main function remains unchanged...
     current_time = time.time()
     last_save_time = os.path.getmtime('state.json') if os.path.exists('state.json') else 0
     if last_save_time > 0 and current_time - last_save_time > 48 * 3600:
@@ -989,7 +993,7 @@ def main():
                         state[f'atr_history_{timeframe}'] = state.get(f'atr_history_{timeframe}', []) + [indicators['atr']]
                         if len(state[f'atr_history_{timeframe}']) > 50:
                             state[f'atr_history_{timeframe}'].pop(0)
-                        indicators['avg_atr'] = np.mean(state[f'atr_history_{timeframe}']) if state[f'atr_history_eagle'] else 2.5
+                        indicators['avg_atr'] = np.mean(state[f'atr_history_{timeframe}']) if state[f'atr_history_{timeframe}'] else 2.5
                     else:
                         indicators['avg_atr'] = 2.5
                     last_indicator_time[timeframe] = current_time
