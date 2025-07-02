@@ -743,14 +743,14 @@ def main():
         state['trailing_stop_price'] = 0
     save_state()
 
-    # Fetch initial prices from CryptoCompare for all timeframes (300 minutes)
+    # Fetch initial prices from CryptoCompare for extended period (1000 minutes)
     log(f"Fetching initial prices from CryptoCompare at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
     API_KEY = os.getenv("CMC_KEY")
     if not API_KEY:
         log("ERROR: CMC_KEY (used as CryptoCompare API key) is not set")
         raise RuntimeError("CryptoCompare API key not found")
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
-    params = {"fsym": "SOL", "tsym": "USD", "limit": 300, "api_key": API_KEY}  # 5 hours (300 minutes)
+    params = {"fsym": "SOL", "tsym": "USD", "limit": 1000, "api_key": API_KEY}  # ~16.67 hours
     try:
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
@@ -759,21 +759,21 @@ def main():
             log(f"CryptoCompare returned error: {data.get('Message')}")
             raise RuntimeError("CryptoCompare response not successful")
         candles = data.get("Data", {}).get("Data", [])
-        if len(candles) < 20:
-            log(f"Insufficient data from CryptoCompare: {len(candles)}/20")
+        if len(candles) < 50:
+            log(f"Insufficient data from CryptoCompare: {len(candles)}/50")
             raise RuntimeError("Not enough historical data")
-        initial_prices = [c["close"] for c in candles if c.get("close") is not None][-300:]  # Last 300 minutes
-        if len(initial_prices) < 20:
-            log(f"Insufficient valid closes: {len(initial_prices)}/20")
+        initial_prices = [c["close"] for c in candles if c.get("close") is not None][-1000:]  # Last 1000 minutes
+        if len(initial_prices) < 50:
+            log(f"Insufficient valid closes: {len(initial_prices)}/50")
             raise RuntimeError("Invalid or incomplete close data")
         state['price_history'] = initial_prices
         state['last_price'] = initial_prices[-1]
         log(f"Initial prices fetched: {len(state['price_history'])} prices, last price ${state['last_price']:.2f}")
 
-        # Initialize timeframe-specific price histories
-        state['rsi_price_history_eagle'] = initial_prices[-20:]  # 20 * 30s = 10min
-        state['rsi_price_history_medium'] = [initial_prices[i] for i in range(0, len(initial_prices), 10)][-20:]  # 200min (10min intervals)
-        state['rsi_price_history_long'] = [initial_prices[i] for i in range(0, len(initial_prices), 15)][-20:]  # 300min (15min intervals)
+        # Initialize timeframe-specific price histories with 50 prices
+        state['rsi_price_history_eagle'] = initial_prices[-50:]  # 50 * 30s = 25min
+        state['rsi_price_history_medium'] = [initial_prices[i] for i in range(0, len(initial_prices), 10)][-50:]  # 500min (10min intervals)
+        state['rsi_price_history_long'] = [initial_prices[i] for i in range(0, len(initial_prices), 15)][-50:]  # 750min (15min intervals)
         log(f"Initialized rsi_price_history_eagle with {len(state['rsi_price_history_eagle'])} prices")
         log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices")
         log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices")
@@ -783,11 +783,11 @@ def main():
         save_state()
     except Exception as e:
         log(f"Failed to fetch initial prices from CryptoCompare: {e}, using fallback")
-        state['price_history'] = [150.0] * 300
+        state['price_history'] = [150.0] * 1000
         state['last_price'] = 150.0
-        state['rsi_price_history_eagle'] = state['price_history'][-20:]
-        state['rsi_price_history_medium'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 10)][-20:]
-        state['rsi_price_history_long'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 15)][-20:]
+        state['rsi_price_history_eagle'] = state['price_history'][-50:]
+        state['rsi_price_history_medium'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 10)][-50:]
+        state['rsi_price_history_long'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 15)][-50:]
         log(f"Fallback initial price set to ${state['last_price']:.2f}")
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
@@ -905,21 +905,21 @@ def main():
                     continue
             state['last_price'] = price
             state['price_history'].append(price)
-            if len(state['price_history']) > 3000:
+            if len(state['price_history']) > 1000:
                 state['price_history'].pop(0)
 
             # Update timeframe-specific price histories
             if current_time - last_indicator_time['eagle'] >= 30:
                 state['rsi_price_history_eagle'].append(price)
-                if len(state['rsi_price_history_eagle']) > 20:
+                if len(state['rsi_price_history_eagle']) > 50:
                     state['rsi_price_history_eagle'].pop(0)
             if current_time - last_indicator_time['medium'] >= 600:
                 state['rsi_price_history_medium'].append(price)
-                if len(state['rsi_price_history_medium']) > 20:
+                if len(state['rsi_price_history_medium']) > 50:
                     state['rsi_price_history_medium'].pop(0)
             if current_time - last_indicator_time['long'] >= 900:
                 state['rsi_price_history_long'].append(price)
-                if len(state['rsi_price_history_long']) > 20:
+                if len(state['rsi_price_history_long']) > 50:
                     state['rsi_price_history_long'].pop(0)
 
             state['last_fetch_time'] = current_time
@@ -931,17 +931,19 @@ def main():
             except Exception as e:
                 log(f"Failed to save price history: {e}")
 
-            # Calculate indicators
+            # Calculate indicators instantly with sufficient data
             for timeframe, period in [('eagle', 30), ('medium', 600), ('long', 900)]:
                 if current_time - last_indicator_time[timeframe] >= period or all(cached_indicators[timeframe][k] is None for k in cached_indicators[timeframe]):
                     prices = state[f'rsi_price_history_{timeframe}']
                     indicators = cached_indicators[timeframe]
-                    indicators['rsi'] = get_current_rsi(prices)
-                    indicators['macd_line'], indicators['signal_line'] = calculate_macd(prices) or (None, None)
-                    indicators['vwap'] = calculate_vwap(prices)
-                    indicators['upper_bb'], indicators['lower_bb'] = calculate_bollinger_bands(prices) or (None, None)
-                    indicators['atr'] = calculate_atr(prices)
-                    indicators['momentum'] = calculate_momentum(prices)
+                    indicators['rsi'] = get_current_rsi(prices) if len(prices) >= 20 else 50.0
+                    macd_result = calculate_macd(prices) if len(prices) >= 34 else (None, None)
+                    indicators['macd_line'], indicators['signal_line'] = macd_result
+                    indicators['vwap'] = calculate_vwap(prices) if len(prices) >= 20 else None
+                    bb_result = calculate_bollinger_bands(prices) if len(prices) >= 20 else (None, None)
+                    indicators['upper_bb'], indicators['lower_bb'] = bb_result
+                    indicators['atr'] = calculate_atr(prices) if len(prices) >= 20 else None
+                    indicators['momentum'] = calculate_momentum(prices) if len(prices) >= 2 else 0.0
                     if indicators['atr'] is not None:
                         state[f'atr_history_{timeframe}'] = state.get(f'atr_history_{timeframe}', []) + [indicators['atr']]
                         if len(state[f'atr_history_{timeframe}']) > 50:
@@ -950,10 +952,10 @@ def main():
                     else:
                         indicators['avg_atr'] = 2.5
                     last_indicator_time[timeframe] = current_time
-                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {indicators['rsi']:.2f}, MACD: {indicators['macd_line']:.2f}/{indicators['signal_line']:.2f}, VWAP: {indicators['vwap']:.2f}, BB: {indicators['upper_bb']:.2f}/{indicators['lower_bb']:.2f}, ATR: {indicators['atr']:.2f}, Momentum: {indicators['momentum']:.2f}")
+                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {indicators['rsi']:.2f if indicators['rsi'] is not None else 'N/A'}, MACD: {indicators['macd_line']:.2f if indicators['macd_line'] is not None else 'N/A'}/{indicators['signal_line']:.2f if indicators['signal_line'] is not None else 'N/A'}, VWAP: {indicators['vwap']:.2f if indicators['vwap'] is not None else 'N/A'}, BB: {indicators['upper_bb']:.2f if indicators['upper_bb'] is not None else 'N/A'}/{indicators['lower_bb']:.2f if indicators['lower_bb'] is not None else 'N/A'}, ATR: {indicators['atr']:.2f if indicators['atr'] is not None else 'N/A'}, Momentum: {indicators['momentum']:.2f if indicators['momentum'] is not None else 'N/A'}")
 
-            if any(ind is None for timeframe in cached_indicators for ind in cached_indicators[timeframe].values()):
-                log("Missing indicators, skipping")
+            if any(ind is None for timeframe in cached_indicators for ind in ['rsi', 'vwap', 'upper_bb', 'lower_bb', 'atr', 'momentum'] if timeframe in cached_indicators):
+                log("Missing critical indicators, skipping")
                 time.sleep(TRADE_INTERVAL)
                 continue
 
@@ -1013,7 +1015,7 @@ def main():
                     fee = get_fee_estimate()
                     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
                     if check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr']):
-                        position_size = calculate_position_size(portfolio_value, ind['atr'], ind['avg_atr'])
+                        position_size = min(calculate_position_size(portfolio_value, ind['atr'], ind['avg_atr']) * buy_factor, MAX_POSITION_SOL - state['position'])
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + fee) <= total_usdc_balance and bid_ask_spread < 0.005:
                             execute_buy(position_size)
                             set_sell_targets(position_size, price)
@@ -1061,7 +1063,7 @@ def main():
             log(f"Sleeping for {sleep_time:.1f}s")
             time.sleep(sleep_time)
         except Exception as e:
-            log(f"Error in main loop, continuing: {e}")
+            log(f"Error in main loop, continuing: {str(e)}")
             time.sleep(TRADE_INTERVAL)
             continue
 
