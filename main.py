@@ -624,11 +624,11 @@ def execute_buy(position_size):
         tx_id, in_amount, out_amount = send_trade(route, price)
         if tx_id:
             sol_bought = out_amount / 1e9
-            state['position'] = sol_bought
+            state['position'] += sol_bought  # Changed to accumulate position
             state['entry_price'] = price
             state['highest_price'] = price
             state['total_trades'] += 1
-            log(f"✅ Bought {sol_bought:.4f} SOL @ ${price:.2f}")
+            log(f"✅ Bought {sol_bought:.4f} SOL @ ${price:.2f}, Total Position: {state['position']:.4f} SOL")
             save_state()
             set_sell_targets(sol_bought, price)
             time.sleep(10)
@@ -720,9 +720,9 @@ def load_state():
 def main():
     global TRADE_INTERVAL, MAX_POSITION_SOL
     MAX_POSITION_SOL = 25.0  # Capacity for massive uptrends
-    TRADE_INTERVAL = 60  # 1-minute base interval
+    TRADE_INTERVAL = 30  # Adjusted to 30s for EagleEye
 
-    log("Entering main loop at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+    log(f"Entering main loop at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
     if 'peak_timestamp' not in state:
         state['peak_timestamp'] = time.time()
     if 'trade_cooldown_until' not in state:
@@ -742,7 +742,7 @@ def main():
     save_state()
 
     # Fetch initial prices from CryptoCompare for all timeframes (300 minutes)
-    log("Fetching initial prices from CryptoCompare at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+    log(f"Fetching initial prices from CryptoCompare at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
     API_KEY = os.getenv("CMC_KEY")
     if not API_KEY:
         log("ERROR: CMC_KEY (used as CryptoCompare API key) is not set")
@@ -757,7 +757,7 @@ def main():
             log(f"CryptoCompare returned error: {data.get('Message')}")
             raise RuntimeError("CryptoCompare response not successful")
         candles = data.get("Data", {}).get("Data", [])
-        if len(candles) < 20:  # Ensure at least 20 periods
+        if len(candles) < 20:
             log(f"Insufficient data from CryptoCompare: {len(candles)}/20")
             raise RuntimeError("Not enough historical data")
         initial_prices = [c["close"] for c in candles if c.get("close") is not None][-300:]  # Last 300 minutes
@@ -766,28 +766,27 @@ def main():
             raise RuntimeError("Invalid or incomplete close data")
         state['price_history'] = initial_prices
         state['last_price'] = initial_prices[-1]
-        log(f"Initial prices fetched: {len(state['price_history'])} prices, last price ${state['last_price']:.2f} at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+        log(f"Initial prices fetched: {len(state['price_history'])} prices, last price ${state['last_price']:.2f}")
 
         # Initialize timeframe-specific price histories
-        state['rsi_price_history_eagle'] = initial_prices[-20:]  # 10-min lookback (20 * 30s)
-        state['rsi_price_history_medium'] = [initial_prices[i] for i in range(0, len(initial_prices), 10)][-20:]  # 200-min lookback (20 * 600s)
-        state['rsi_price_history_long'] = [initial_prices[i] for i in range(0, len(initial_prices), 15)][-20:]  # 300-min lookback (20 * 900s)
+        state['rsi_price_history_eagle'] = initial_prices[-20:]  # 20 * 30s = 10min
+        state['rsi_price_history_medium'] = [initial_prices[i] for i in range(0, len(initial_prices), 10)][-20:]  # 200min (10min intervals)
+        state['rsi_price_history_long'] = [initial_prices[i] for i in range(0, len(initial_prices), 15)][-20:]  # 300min (15min intervals)
         log(f"Initialized rsi_price_history_eagle with {len(state['rsi_price_history_eagle'])} prices")
         log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices")
         log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices")
 
-        # Save initial state
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
         save_state()
     except Exception as e:
-        log(f"Failed to fetch initial prices from CryptoCompare: {e}, using fallback at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
-        state['price_history'] = [150.0] * 300  # Fallback 300 prices
+        log(f"Failed to fetch initial prices from CryptoCompare: {e}, using fallback")
+        state['price_history'] = [150.0] * 300
         state['last_price'] = 150.0
         state['rsi_price_history_eagle'] = state['price_history'][-20:]
         state['rsi_price_history_medium'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 10)][-20:]
         state['rsi_price_history_long'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 15)][-20:]
-        log(f"Fallback initial price set to ${state['last_price']:.2f} at {time.strftime('%H:%M:%S', time.localtime(time.time()))}")
+        log(f"Fallback initial price set to ${state['last_price']:.2f}")
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
         save_state()
@@ -795,21 +794,19 @@ def main():
     current_time = time.time()
     last_save_time = os.path.getmtime('state.json') if os.path.exists('state.json') else 0
     if last_save_time > 0 and current_time - last_save_time > 48 * 3600:
-        log(f"State file older than 48 hours, resetting at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+        log(f"State file older than 48 hours, resetting")
     price = state['last_price']
     if price:
         portfolio_value = get_portfolio_value(price)
         if state.get('peak_portfolio', 0) == 0 or abs(state['peak_portfolio'] - portfolio_value) / portfolio_value > 0.5:
-            log(f"Resetting peak_portfolio to ${portfolio_value:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
             state['peak_portfolio'] = portfolio_value
             state['peak_timestamp'] = current_time
         if state.get('pause_until', 0) > current_time and (current_time - state['peak_timestamp'] > 6 * 3600 or last_save_time == 0):
-            log(f"Clearing stale pause_until at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
             state['pause_until'] = 0
         save_state()
 
     if current_time - state['peak_timestamp'] > 604800:
-        log(f"Peak portfolio over 7 days old, resetting to ${portfolio_value:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+        log(f"Peak portfolio over 7 days old, resetting to ${portfolio_value:.2f}")
         if price:
             portfolio_value = get_portfolio_value(price)
             state['peak_portfolio'] = portfolio_value
@@ -820,33 +817,11 @@ def main():
     last_indicator_time_eagle = 0
     last_indicator_time_medium = 0
     last_indicator_time_long = 0
-    cached_rsi_eagle = None
-    cached_macd_line_eagle = None
-    cached_signal_line_eagle = None
-    cached_vwap_eagle = None
-    cached_upper_bb_eagle = None
-    cached_lower_bb_eagle = None
-    cached_atr_eagle = None
-    cached_momentum_eagle = None
-    cached_avg_atr_eagle = None
-    cached_rsi_medium = None
-    cached_macd_line_medium = None
-    cached_signal_line_medium = None
-    cached_vwap_medium = None
-    cached_upper_bb_medium = None
-    cached_lower_bb_medium = None
-    cached_atr_medium = None
-    cached_momentum_medium = None
-    cached_avg_atr_medium = None
-    cached_rsi_long = None
-    cached_macd_line_long = None
-    cached_signal_line_long = None
-    cached_vwap_long = None
-    cached_upper_bb_long = None
-    cached_lower_bb_long = None
-    cached_atr_long = None
-    cached_momentum_long = None
-    cached_avg_atr_long = None
+    cached_indicators = {
+        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5},
+        'medium': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5},
+        'long': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5}
+    }
     last_sol_balance = state.get('last_sol_balance', 0.0)
     last_usdc_balance = state.get('last_usdc_balance', 0.0)
     peak_market_value = state.get('peak_market_value', 0.0)
@@ -860,17 +835,17 @@ def main():
                     portfolio = usdc_balance + (sol_balance * price)
                     expected_portfolio = last_usdc_balance + (last_sol_balance * price)
                     if abs(portfolio - expected_portfolio) > 0.1 and attempt < max_retries - 1:
-                        log(f"Portfolio mismatch, retrying (attempt {attempt + 1}/{max_retries}) at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                        log(f"Portfolio mismatch, retrying (attempt {attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
-                    log(f"Portfolio: SOL={sol_balance:.4f}, USDC={usdc_balance:.4f}, Value=${portfolio:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                    log(f"Portfolio: SOL={sol_balance:.4f}, USDC={usdc_balance:.4f}, Value=${portfolio:.2f}")
                     return portfolio, sol_balance, usdc_balance
             except Exception as e:
-                log(f"Error fetching portfolio (attempt {attempt + 1}/{max_retries}): {e} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                log(f"Error fetching portfolio (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     return None, None, None
                 time.sleep(wait_time)
-        log(f"Failed to fetch portfolio after {max_retries} attempts at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+        log(f"Failed to fetch portfolio after {max_retries} attempts")
         return None, None, None
 
     while True:
@@ -882,7 +857,7 @@ def main():
             if current_time < state['pause_until']:
                 remaining_pause = state['pause_until'] - current_time
                 if state['pause_until'] - state['peak_timestamp'] > 48 * 3600:
-                    log(f"Pause exceeded 48 hours, resuming at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                    log(f"Pause exceeded 48 hours, resuming")
                     state['pause_until'] = 0
                     if price:
                         portfolio_value = get_portfolio_value(price)
@@ -895,7 +870,7 @@ def main():
                     continue
             else:
                 if state['pause_until'] != 0:
-                    log(f"Resuming trading after pause at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                    log(f"Resuming trading after pause")
                     state['pause_until'] = 0
                     if price:
                         portfolio_value = get_portfolio_value(price)
@@ -907,27 +882,28 @@ def main():
             if price is None:
                 if state['price_history']:
                     price = state['price_history'][-1]
-                    log(f"Using last cached price: ${price:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                    log(f"Using last cached price: ${price:.2f}")
                 else:
-                    log(f"No price data available, skipping iteration at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                    log(f"No price data available, skipping iteration")
                     time.sleep(TRADE_INTERVAL)
                     continue
             state['last_price'] = price
             state['price_history'].append(price)
-            if len(state['price_history']) > 3000:  # Increased for 15-min sampling
+            if len(state['price_history']) > 3000:
                 state['price_history'].pop(0)
 
-            if current_time - last_indicator_time_eagle >= 30:  # 30s update
+            # Update timeframe-specific price histories
+            if current_time - last_indicator_time_eagle >= 30:
                 state['rsi_price_history_eagle'].append(price)
-                if len(state['rsi_price_history_eagle']) > 20:  # 10-min lookback
+                if len(state['rsi_price_history_eagle']) > 20:
                     state['rsi_price_history_eagle'].pop(0)
-            if current_time - last_indicator_time_medium >= 600:  # 10-min update
+            if current_time - last_indicator_time_medium >= 600:
                 state['rsi_price_history_medium'].append(price)
-                if len(state['rsi_price_history_medium']) > 20:  # 200-min lookback
+                if len(state['rsi_price_history_medium']) > 20:
                     state['rsi_price_history_medium'].pop(0)
-            if current_time - last_indicator_time_long >= 900:  # 15-min update
+            if current_time - last_indicator_time_long >= 900:
                 state['rsi_price_history_long'].append(price)
-                if len(state['rsi_price_history_long']) > 20:  # 300-min lookback
+                if len(state['rsi_price_history_long']) > 20:
                     state['rsi_price_history_long'].pop(0)
 
             state['last_fetch_time'] = current_time
@@ -937,91 +913,43 @@ def main():
                 with open('price_history.json', 'w') as f:
                     json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
             except Exception as e:
-                log(f"Failed to save price history: {e} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                log(f"Failed to save price history: {e}")
 
-            # EagleEye indicators (30s)
-            if current_time - last_indicator_time_eagle >= 30 or any(x is None for x in [cached_rsi_eagle, cached_macd_line_eagle, cached_signal_line_eagle, cached_vwap_eagle, cached_upper_bb_eagle, cached_lower_bb_eagle, cached_atr_eagle, cached_momentum_eagle, cached_avg_atr_eagle]):
-                rsi_eagle = get_current_rsi(state['rsi_price_history_eagle'])
-                macd_line_eagle, signal_line_eagle = calculate_macd(state['rsi_price_history_eagle'], fast=12, slow=26, signal=9)
-                vwap_eagle = calculate_vwap(state['rsi_price_history_eagle'])
-                upper_bb_eagle, lower_bb_eagle = calculate_bollinger_bands(state['rsi_price_history_eagle'])
-                atr_eagle = calculate_atr(state['rsi_price_history_eagle'])
-                momentum_eagle = calculate_momentum(state['rsi_price_history_eagle'])
-                if atr_eagle is not None:
-                    state['atr_history_eagle'] = state.get('atr_history_eagle', []) + [atr_eagle]
-                    if len(state['atr_history_eagle']) > 50:
-                        state['atr_history_eagle'].pop(0)
-                    avg_atr_eagle = np.mean(state['atr_history_eagle']) if state['atr_history_eagle'] else 2.5
-                else:
-                    avg_atr_eagle = 2.5
-                cached_rsi_eagle, cached_macd_line_eagle, cached_signal_line_eagle = rsi_eagle, macd_line_eagle, signal_line_eagle
-                cached_vwap_eagle, cached_upper_bb_eagle, cached_lower_bb_eagle = vwap_eagle, upper_bb_eagle, lower_bb_eagle
-                cached_atr_eagle, cached_momentum_eagle, cached_avg_atr_eagle = atr_eagle, momentum_eagle, avg_atr_eagle
-                last_indicator_time_eagle = current_time
-                log(f"EagleEye Indicators (30s) - RSI: {rsi_eagle:.2f}, MACD: {macd_line_eagle:.2f}/{signal_line_eagle:.2f}, VWAP: {vwap_eagle:.2f}, BB: {upper_bb_eagle:.2f}/{lower_bb_eagle:.2f}, ATR: {atr_eagle:.2f}, Momentum: {momentum_eagle:.2f}, Avg ATR: {avg_atr_eagle:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+            # Calculate indicators
+            for timeframe, period in [('eagle', 30), ('medium', 600), ('long', 900)]:
+                last_time = globals()[f'last_indicator_time_{timeframe}']
+                if current_time - last_time >= period or all(cached_indicators[timeframe][k] is None for k in cached_indicators[timeframe]):
+                    prices = state[f'rsi_price_history_{timeframe}']
+                    indicators = cached_indicators[timeframe]
+                    indicators['rsi'] = get_current_rsi(prices)
+                    indicators['macd_line'], indicators['signal_line'] = calculate_macd(prices) or (None, None)
+                    indicators['vwap'] = calculate_vwap(prices)
+                    indicators['upper_bb'], indicators['lower_bb'] = calculate_bollinger_bands(prices) or (None, None)
+                    indicators['atr'] = calculate_atr(prices)
+                    indicators['momentum'] = calculate_momentum(prices)
+                    if indicators['atr'] is not None:
+                        state[f'atr_history_{timeframe}'] = state.get(f'atr_history_{timeframe}', []) + [indicators['atr']]
+                        if len(state[f'atr_history_{timeframe}']) > 50:
+                            state[f'atr_history_{timeframe}'].pop(0)
+                        indicators['avg_atr'] = np.mean(state[f'atr_history_{timeframe}']) if state[f'atr_history_{timeframe}'] else 2.5
+                    else:
+                        indicators['avg_atr'] = 2.5
+                    globals()[f'last_indicator_time_{timeframe}'] = current_time
+                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {indicators['rsi']:.2f}, MACD: {indicators['macd_line']:.2f}/{indicators['signal_line']:.2f}, VWAP: {indicators['vwap']:.2f}, BB: {indicators['upper_bb']:.2f}/{indicators['lower_bb']:.2f}, ATR: {indicators['atr']:.2f}, Momentum: {indicators['momentum']:.2f}")
 
-            # Medium-term indicators (10min)
-            if current_time - last_indicator_time_medium >= 600 or any(x is None for x in [cached_rsi_medium, cached_macd_line_medium, cached_signal_line_medium, cached_vwap_medium, cached_upper_bb_medium, cached_lower_bb_medium, cached_atr_medium, cached_momentum_medium, cached_avg_atr_medium]):
-                rsi_medium = get_current_rsi(state['rsi_price_history_medium'])
-                macd_line_medium, signal_line_medium = calculate_macd(state['rsi_price_history_medium'], fast=12, slow=26, signal=9)
-                vwap_medium = calculate_vwap(state['rsi_price_history_medium'])
-                upper_bb_medium, lower_bb_medium = calculate_bollinger_bands(state['rsi_price_history_medium'])
-                atr_medium = calculate_atr(state['rsi_price_history_medium'])
-                momentum_medium = calculate_momentum(state['rsi_price_history_medium'])
-                if atr_medium is not None:
-                    state['atr_history_medium'] = state.get('atr_history_medium', []) + [atr_medium]
-                    if len(state['atr_history_medium']) > 50:
-                        state['atr_history_medium'].pop(0)
-                    avg_atr_medium = np.mean(state['atr_history_medium']) if state['atr_history_medium'] else 2.5
-                else:
-                    avg_atr_medium = 2.5
-                cached_rsi_medium, cached_macd_line_medium, cached_signal_line_medium = rsi_medium, macd_line_medium, signal_line_medium
-                cached_vwap_medium, cached_upper_bb_medium, cached_lower_bb_medium = vwap_medium, upper_bb_medium, lower_bb_medium
-                cached_atr_medium, cached_momentum_medium, cached_avg_atr_medium = atr_medium, momentum_medium, avg_atr_medium
-                last_indicator_time_medium = current_time
-                log(f"Medium-term Indicators (10min) - RSI: {rsi_medium:.2f}, MACD: {macd_line_medium:.2f}/{signal_line_medium:.2f}, VWAP: {vwap_medium:.2f}, BB: {upper_bb_medium:.2f}/{lower_bb_medium:.2f}, ATR: {atr_medium:.2f}, Momentum: {momentum_medium:.2f}, Avg ATR: {avg_atr_medium:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-
-            # Long-term indicators (15min)
-            if current_time - last_indicator_time_long >= 900 or any(x is None for x in [cached_rsi_long, cached_macd_line_long, cached_signal_line_long, cached_vwap_long, cached_upper_bb_long, cached_lower_bb_long, cached_atr_long, cached_momentum_long, cached_avg_atr_long]):
-                rsi_long = get_current_rsi(state['rsi_price_history_long'])
-                macd_line_long, signal_line_long = calculate_macd(state['rsi_price_history_long'], fast=12, slow=26, signal=9)
-                vwap_long = calculate_vwap(state['rsi_price_history_long'])
-                upper_bb_long, lower_bb_long = calculate_bollinger_bands(state['rsi_price_history_long'])
-                atr_long = calculate_atr(state['rsi_price_history_long'])
-                momentum_long = calculate_momentum(state['rsi_price_history_long'])
-                if atr_long is not None:
-                    state['atr_history_long'] = state.get('atr_history_long', []) + [atr_long]
-                    if len(state['atr_history_long']) > 50:
-                        state['atr_history_long'].pop(0)
-                    avg_atr_long = np.mean(state['atr_history_long']) if state['atr_history_long'] else 2.5
-                else:
-                    avg_atr_long = 2.5
-                cached_rsi_long, cached_macd_line_long, cached_signal_line_long = rsi_long, macd_line_long, signal_line_long
-                cached_vwap_long, cached_upper_bb_long, cached_lower_bb_long = vwap_long, upper_bb_long, lower_bb_long
-                cached_atr_long, cached_momentum_long, cached_avg_atr_long = atr_long, momentum_long, avg_atr_long
-                last_indicator_time_long = current_time
-                log(f"Long-term Indicators (15min) - RSI: {rsi_long:.2f}, MACD: {macd_line_long:.2f}/{signal_line_long:.2f}, VWAP: {vwap_long:.2f}, BB: {upper_bb_long:.2f}/{lower_bb_long:.2f}, ATR: {atr_long:.2f}, Momentum: {momentum_long:.2f}, Avg ATR: {avg_atr_long:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-
-            if any(x is None for x in [cached_rsi_eagle, cached_macd_line_eagle, cached_signal_line_eagle, cached_vwap_eagle, cached_lower_bb_eagle, cached_momentum_eagle, cached_atr_eagle, cached_avg_atr_eagle]) or \
-               any(x is None for x in [cached_rsi_medium, cached_macd_line_medium, cached_signal_line_medium, cached_vwap_medium, cached_lower_bb_medium, cached_momentum_medium, cached_atr_medium, cached_avg_atr_medium]) or \
-               any(x is None for x in [cached_rsi_long, cached_macd_line_long, cached_signal_line_long, cached_vwap_long, cached_lower_bb_long, cached_momentum_long, cached_atr_long, cached_avg_atr_long]):
-                log(f"One or more indicators invalid across periods, skipping iteration at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+            if any(ind is None for timeframe in cached_indicators for ind in cached_indicators[timeframe].values()):
+                log("Missing indicators, skipping")
                 time.sleep(TRADE_INTERVAL)
                 continue
 
-            TRADE_INTERVAL = 60  # Fixed to 1-minute
-            if cached_atr_eagle > 0.8 * cached_avg_atr_eagle or abs(cached_momentum_eagle) > 0.8:
-                TRADE_INTERVAL = 60  # Maintains EagleEye focus
-            log(f"Current TRADE_INTERVAL set to: {TRADE_INTERVAL}s at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-
             portfolio_value, sol_balance, usdc_balance = get_updated_portfolio(price, wait_time=30)
             if portfolio_value is None:
-                log(f"Portfolio fetch failed, skipping iteration at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                log("Portfolio fetch failed, skipping")
                 time.sleep(TRADE_INTERVAL)
                 continue
             if sol_balance is not None and usdc_balance is not None:
                 if abs(sol_balance - last_sol_balance) > 0.0001 or abs(usdc_balance - last_usdc_balance) > 0.01:
-                    log(f"Balance updated: SOL {last_sol_balance:.4f} -> {sol_balance:.4f}, USDC {last_usdc_balance:.4f} -> {usdc_balance:.4f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                    log(f"Balance updated: SOL {last_sol_balance:.4f} -> {sol_balance:.4f}, USDC {last_usdc_balance:.4f} -> {usdc_balance:.4f}")
                 last_sol_balance = sol_balance
                 last_usdc_balance = usdc_balance
                 state['last_sol_balance'] = sol_balance
@@ -1036,181 +964,89 @@ def main():
                     peak_market_value = peak_market_value_with_current_holdings
                     state['peak_market_value'] = peak_market_value
                 market_drawdown = (peak_market_value - current_market_value) / peak_market_value * 100 if peak_market_value > 0 else 0
-                log(f"Market metrics - Current Value: ${current_market_value:.2f}, Peak Value: ${peak_market_value:.2f}, Drawdown: {market_drawdown:.2f}% at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                log(f"Market metrics - Current Value: ${current_market_value:.2f}, Peak Value: ${peak_market_value:.2f}, Drawdown: {market_drawdown:.2f}%")
 
             if portfolio_value > 0:
                 if state.get('peak_portfolio', 0) == 0 or abs(state.get('peak_portfolio', 0) - portfolio_value) / portfolio_value > 0.5:
                     state['peak_portfolio'] = portfolio_value
                     state['peak_timestamp'] = current_time
                     state['peak_market_value'] = portfolio_value
-                    log(f"Peak portfolio reset to: ${portfolio_value:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                    log(f"Peak portfolio reset to: ${portfolio_value:.2f}")
                 elif portfolio_value > state['peak_portfolio']:
                     state['peak_portfolio'] = portfolio_value
                     state['peak_timestamp'] = current_time
                     state['peak_market_value'] = portfolio_value
-                    log(f"Peak portfolio updated to: ${portfolio_value:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                    log(f"Peak portfolio updated to: ${portfolio_value:.2f}")
             save_state()
 
-            log(f"Portfolio Value: ${portfolio_value:.2f}, Market Drawdown: {market_drawdown:.2f}% at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+            log(f"Portfolio Value: ${portfolio_value:.2f}, Market Drawdown: {market_drawdown:.2f}%")
             if market_drawdown > MAX_DRAWDOWN:
-                log(f"Drawdown {market_drawdown:.2f}% exceeds {MAX_DRAWDOWN}%, pausing for 1 hour at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                log(f"Drawdown {market_drawdown:.2f}% exceeds {MAX_DRAWDOWN}%, pausing for 1 hour")
                 state['pause_until'] = current_time + 3600
                 save_state()
                 continue
 
-            adjust_triggers(cached_atr_eagle, cached_avg_atr_eagle, cached_rsi_eagle)
+            adjust_triggers(cached_indicators['eagle']['atr'], cached_indicators['eagle']['avg_atr'], cached_indicators['eagle']['rsi'])
             total_sol_balance = get_sol_balance()
             total_usdc_balance = get_usdc_balance()
-            log(f"Current balances - SOL: {total_sol_balance:.4f}, USDC: {total_usdc_balance:.4f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+            log(f"Current balances - SOL: {total_sol_balance:.4f}, USDC: {total_usdc_balance:.4f}")
 
-            # Buy Logic: All periods
+            # Buy Logic
             if current_time >= state['trade_cooldown_until'] and total_usdc_balance > MIN_TRADE_USD:
-                # EagleEye Buy (30s)
-                avg_rsi_eagle = np.mean([get_current_rsi(state['rsi_price_history_eagle']) for _ in range(20)]) if len(state['rsi_price_history_eagle']) >= 20 else 50
-                target_rsi_eagle = avg_rsi_eagle - 2 if price < cached_vwap_eagle else avg_rsi_eagle + 2
-                price_momentum = (price - state['price_history'][-5]) / state['price_history'][-5] * 100 if len(state['price_history']) >= 5 else 0
-                prev_momentum = (state['price_history'][-5] - state['price_history'][-10]) / state['price_history'][-10] * 100 if len(state['price_history']) >= 10 else 0
-                eagleeye_buy_condition = (prev_momentum < -0.5 * cached_avg_atr_eagle and price_momentum > 0.2 * cached_avg_atr_eagle and cached_rsi_eagle < target_rsi_eagle) or (cached_macd_line_eagle > cached_signal_line_eagle and price > cached_lower_bb_eagle)
-                if eagleeye_buy_condition:
-                    position_size = min(total_usdc_balance / price * 0.3, MAX_POSITION_SOL - state['position'])  # 30% of available USDC
-                    if position_size > 0.001:
-                        cost = position_size * price * (1 + 0.0005)
-                        if cost <= total_usdc_balance:
+                for timeframe, buy_factor in [('eagle', 0.3), ('medium', 0.4), ('long', 0.5)]:
+                    ind = cached_indicators[timeframe]
+                    target_rsi = ind['rsi'] - 2 if price < ind['vwap'] else ind['rsi'] + 2
+                    buy_condition = (ind['rsi'] < target_rsi and ind['macd_line'] > ind['signal_line']) or (price > ind['lower_bb'] and ind['momentum'] > 0)
+                    if timeframe == 'medium' and not (cached_indicators['long']['rsi'] > 50 or ind['rsi'] < 30):
+                        buy_condition = False
+                    if buy_condition:
+                        position_size = min(total_usdc_balance / price * buy_factor, MAX_POSITION_SOL - state['position'])
+                        if position_size > 0.001 and position_size * price * 1.005 <= total_usdc_balance:
                             execute_buy(position_size)
-                            time.sleep(60)
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=30)
-                            if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                state['position'] += position_size
-                                state['last_buy_price'] = price
-                                state['trade_cooldown_until'] = current_time + 2
-                                state['trailing_stop_price'] = price * (1 - 0.03 * (cached_avg_atr_eagle / cached_atr_eagle if cached_atr_eagle > 0 else 1))
-                                state['highest_price'] = price
-                                log(f"EagleEye Buy (30s): {position_size:.4f} SOL, Total Position: {state['position']:.4f} SOL, RSI: {cached_rsi_eagle:.2f}, Target RSI: {target_rsi_eagle:.2f}, MACD: {cached_macd_line_eagle:.2f}/{cached_signal_line_eagle:.2f}, Net Profit: $0.00 at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-                                save_state()
+                            time.sleep(10)
+                            state['last_buy_price'] = price
+                            state['trade_cooldown_until'] = current_time + 2
+                            state['trailing_stop_price'] = price * (1 - 0.03)
+                            state['highest_price'] = price
+                            log(f"{timeframe.capitalize()} Buy: {position_size:.4f} SOL, Position: {state['position']:.4f} SOL, RSI: {ind['rsi']:.2f}")
+                            save_state()
 
-                # Medium-term Buy (10min)
-                avg_rsi_medium = np.mean([get_current_rsi(state['rsi_price_history_medium']) for _ in range(20)]) if len(state['rsi_price_history_medium']) >= 20 else 50
-                target_rsi_medium = avg_rsi_medium - 2 if price < cached_vwap_medium else avg_rsi_medium + 2
-                medium_buy_condition = (cached_rsi_medium < target_rsi_medium and cached_macd_line_medium > cached_signal_line_medium) or (price > cached_lower_bb_medium and cached_momentum_medium > 0.5 * cached_avg_atr_medium)
-                long_term_bullish = cached_rsi_long > 50 and cached_macd_line_long > cached_signal_line_long  # Influence from long-term
-                if medium_buy_condition and (long_term_bullish or cached_rsi_medium < 30):
-                    position_size = min(total_usdc_balance / price * 0.4, MAX_POSITION_SOL - state['position'])  # 40% of available USDC
-                    if position_size > 0.001:
-                        cost = position_size * price * (1 + 0.0005)
-                        if cost <= total_usdc_balance:
-                            execute_buy(position_size)
-                            time.sleep(60)
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=30)
-                            if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                state['position'] += position_size
-                                state['last_buy_price'] = price
-                                state['trade_cooldown_until'] = current_time + 2
-                                state['trailing_stop_price'] = price * (1 - 0.02 * (cached_avg_atr_medium / cached_atr_medium if cached_atr_medium > 0 else 1))
-                                state['highest_price'] = price
-                                log(f"Medium-term Buy (10min): {position_size:.4f} SOL, Total Position: {state['position']:.4f} SOL, RSI: {cached_rsi_medium:.2f}, Target RSI: {target_rsi_medium:.2f}, MACD: {cached_macd_line_medium:.2f}/{cached_signal_line_medium:.2f}, Long-term Influence: {long_term_bullish} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-                                save_state()
-
-                # Long-term Buy (15min)
-                avg_rsi_long = np.mean([get_current_rsi(state['rsi_price_history_long']) for _ in range(20)]) if len(state['rsi_price_history_long']) >= 20 else 50
-                target_rsi_long = avg_rsi_long - 2 if price < cached_vwap_long else avg_rsi_long + 2
-                long_buy_condition = (cached_rsi_long < target_rsi_long and cached_macd_line_long > cached_signal_line_long) or (price > cached_lower_bb_long and cached_momentum_long > 0.7 * cached_avg_atr_long)
-                if long_buy_condition:
-                    position_size = min(total_usdc_balance / price * 0.5, MAX_POSITION_SOL - state['position'])  # 50% of available USDC
-                    if position_size > 0.001:
-                        cost = position_size * price * (1 + 0.0005)
-                        if cost <= total_usdc_balance:
-                            execute_buy(position_size)
-                            time.sleep(60)
-                            portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=30)
-                            if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                                state['position'] += position_size
-                                state['last_buy_price'] = price
-                                state['trade_cooldown_until'] = current_time + 2
-                                state['trailing_stop_price'] = price * (1 - 0.01 * (cached_avg_atr_long / cached_atr_long if cached_atr_long > 0 else 1))
-                                state['highest_price'] = price
-                                log(f"Long-term Buy (15min): {position_size:.4f} SOL, Total Position: {state['position']:.4f} SOL, RSI: {cached_rsi_long:.2f}, Target RSI: {target_rsi_long:.2f}, MACD: {cached_macd_line_long:.2f}/{cached_signal_line_long:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-                                save_state()
-
-            # Sell Logic: All periods
+            # Sell Logic
             if total_sol_balance > MIN_SOL_THRESHOLD and state['position'] > 0:
                 profit_percent = ((price - state['last_buy_price']) / state['last_buy_price'] * 100) if state['last_buy_price'] else 0
                 if price > state['highest_price']:
                     state['highest_price'] = price
-                    state['trailing_stop_price'] = max(state['trailing_stop_price'],
-                                                    price * (1 - 0.005 * (cached_avg_atr_long / cached_atr_long if cached_atr_long > 0 else 1))) if profit_percent > 5 else \
-                                                    price * (1 - 0.03 * (cached_avg_atr_eagle / cached_atr_eagle if cached_atr_eagle > 0 else 1))
-
-                # EagleEye Sell (30s)
-                eagleeye_sell_condition = price <= state['trailing_stop_price'] or (cached_macd_line_eagle < cached_signal_line_eagle and profit_percent > 1) or profit_percent >= 3
-                if eagleeye_sell_condition:
-                    sell_amount = state['position'] * 0.1 if profit_percent < 3 else state['position'] * 0.2
-                    sell_amount = max(0.001, min(sell_amount, state['position']))
-                    if sell_amount > 0:
-                        execute_sell(sell_amount, price)
-                        time.sleep(60)
-                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=30)
-                        if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                            state['position'] -= sell_amount
+                    state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - 0.015))
+                for timeframe, sell_factor, profit_target in [('eagle', 0.2, 3), ('medium', 0.3, 10), ('long', 0.5, 25)]:
+                    ind = cached_indicators[timeframe]
+                    sell_condition = (price <= state['trailing_stop_price'] or (ind['macd_line'] < ind['signal_line'] and profit_percent > profit_target / 2) or profit_percent >= profit_target)
+                    if timeframe == 'medium' and not (cached_indicators['long']['rsi'] < 50 or profit_percent >= 10):
+                        sell_condition = False
+                    if sell_condition:
+                        sell_amount = min(state['position'] * sell_factor, state['position'])
+                        if sell_amount > 0.001:
+                            execute_sell(sell_amount, price)
+                            time.sleep(10)
                             profit = (price - state['last_buy_price']) * sell_amount - (0.0005 * price * sell_amount * 2)
                             state['total_profit'] = state.get('total_profit', 0) + profit
                             state['trade_cooldown_until'] = current_time + 2
-                            log(f"EagleEye Sell (30s): {sell_amount:.4f} SOL, Remaining: {state['position']:.4f} SOL, RSI: {cached_rsi_eagle:.2f}, Profit: ${profit:.2f}, Total Profit: ${state['total_profit']:.2f}, MACD: {cached_macd_line_eagle:.2f}/{cached_signal_line_eagle:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+                            log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL, Profit: ${profit:.2f}")
                             save_state()
-
-                # Medium-term Sell (10min), influenced by long-term
-                medium_sell_condition = price <= state['trailing_stop_price'] or (cached_macd_line_medium < cached_signal_line_medium and profit_percent > 5) or profit_percent >= 10
-                long_term_bearish = cached_rsi_long < 50 or cached_macd_line_long < cached_signal_line_long  # Influence
-                if medium_sell_condition and (long_term_bearish or profit_percent >= 10):
-                    sell_amount = state['position'] * 0.15 if profit_percent < 10 else state['position'] * 0.3
-                    sell_amount = max(0.001, min(sell_amount, state['position']))
-                    if sell_amount > 0:
-                        execute_sell(sell_amount, price)
-                        time.sleep(60)
-                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=30)
-                        if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                            state['position'] -= sell_amount
-                            profit = (price - state['last_buy_price']) * sell_amount - (0.0005 * price * sell_amount * 2)
-                            state['total_profit'] = state.get('total_profit', 0) + profit
-                            state['trade_cooldown_until'] = current_time + 2
-                            log(f"Medium-term Sell (10min): {sell_amount:.4f} SOL, Remaining: {state['position']:.4f} SOL, RSI: {cached_rsi_medium:.2f}, Profit: ${profit:.2f}, Total Profit: ${state['total_profit']:.2f}, MACD: {cached_macd_line_medium:.2f}/{cached_signal_line_medium:.2f}, Long-term Influence: {long_term_bearish} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-                            save_state()
-
-                # Long-term Sell (15min)
-                long_term_sell_condition = profit_percent >= 25 or (cached_macd_line_long < cached_signal_line_long and profit_percent > 15)
-                if profit_percent >= 24 and profit_percent < 25 and cached_macd_line_long < cached_signal_line_long:
-                    long_term_sell_condition = True
-                if long_term_sell_condition:
-                    sell_amount = state['position'] * 0.5 if profit_percent < 30 else state['position']
-                    sell_amount = max(0.001, min(sell_amount, state['position']))
-                    if sell_amount > 0:
-                        execute_sell(sell_amount, price)
-                        time.sleep(60)
-                        portfolio_value_after, sol_balance_after, usdc_balance_after = get_updated_portfolio(price, wait_time=30)
-                        if portfolio_value_after and sol_balance_after and usdc_balance_after:
-                            state['position'] -= sell_amount
-                            profit = (price - state['last_buy_price']) * sell_amount - (0.0005 * price * sell_amount * 2)
-                            state['total_profit'] = state.get('total_profit', 0) + profit
-                            state['trade_cooldown_until'] = current_time + 2
-                            log(f"Long-term Sell (15min): {sell_amount:.4f} SOL, Remaining: {state['position']:.4f} SOL, RSI: {cached_rsi_long:.2f}, Profit: ${profit:.2f}, Total Profit: ${state['total_profit']:.2f}, MACD: {cached_macd_line_long:.2f}/{cached_signal_line_long:.2f} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-                            save_state()
-                    if state['position'] <= 0.001:
-                        state['position'] = 0
-                        state['highest_price'] = 0
-                        state['trailing_stop_price'] = 0
-                        log(f"Position fully closed after long-term sell at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
-                        save_state()
+                            if state['position'] <= 0.001:
+                                state['position'] = 0
+                                state['highest_price'] = 0
+                                state['trailing_stop_price'] = 0
 
             if current_time - last_stats_time >= 3600:
                 log_performance(portfolio_value)
                 last_stats_time = current_time
-                save_state()
 
             elapsed = time.time() - loop_start
             sleep_time = max(0, TRADE_INTERVAL - elapsed)
-            log(f"Sleeping for {sleep_time:.1f}s until next iteration at {time.strftime('%H:%M:%S', time.localtime(current_time + sleep_time))}")
+            log(f"Sleeping for {sleep_time:.1f}s")
             time.sleep(sleep_time)
         except Exception as e:
-            log(f"Error in main loop, continuing: {e} at {time.strftime('%H:%M:%S', time.localtime(current_time))}")
+            log(f"Error in main loop, continuing: {e}")
             time.sleep(TRADE_INTERVAL)
             continue
 
@@ -1248,8 +1084,7 @@ if __name__ == "__main__":
         health_thread.start()
         http_thread = threading.Thread(target=http_server, daemon=True)
         http_thread.start()
-        load_state()  # Load state
-        initialize_price_history()
+        load_state()
         with open('stats.csv', 'w') as f:
             f.write("timestamp,portfolio_value,total_trades,wins,losses,total_profit,win_rate,profit_factor,drawdown\n")
         while True:
@@ -1258,13 +1093,12 @@ if __name__ == "__main__":
             except Exception as e:
                 log(f"Main loop crashed, restarting: {e}")
                 time.sleep(10)
-                initialize_price_history()
                 continue
     except KeyboardInterrupt:
         log("Bot stopped by user")
         portfolio_value = get_portfolio_value(state['price_history'][-1] if state['price_history'] else 0)
         log_performance(portfolio_value)
-        save_state()  # Save state on shutdown
+        save_state()
         log(f"Final Stats: Total Return: {state['total_profit'] / portfolio_value * 100:.2f}%, "
             f"Win Rate: {state['wins'] / state['total_trades'] * 100 if state['total_trades'] > 0 else 0:.2f}%, "
             f"Adverse Months: Not Calculated")
