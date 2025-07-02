@@ -308,8 +308,8 @@ def get_fee_estimate():
     return state['cached_fee']
 
 # Indicator Functions
-def get_current_rsi(prices, period=20):
-    if len(prices) < period + 1:
+def get_current_rsi(prices, period=14):
+    if len(prices) < period:
         log("Not enough prices for RSI calculation, returning 50.0")
         return 50.0
     prices = np.array(prices)
@@ -778,9 +778,13 @@ def main():
         log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices")
         log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices")
 
-        # Precompute warmup indicators for eagle
-        if len(state['rsi_price_history_eagle']) >= 34:
-            rsi_values = [get_current_rsi(state['rsi_price_history_eagle'][i:i+14], period=14) for i in range(len(state['rsi_price_history_eagle']) - 14)]
+        # Precompute warmup indicators for eagle (single pass)
+        if len(state['rsi_price_history_eagle']) >= 14:
+            rsi_values = []
+            for i in range(len(state['rsi_price_history_eagle']) - 14 + 1):
+                rsi = get_current_rsi(state['rsi_price_history_eagle'][i:i+14], period=14)
+                if rsi is not None:
+                    rsi_values.append(rsi)
             if rsi_values:
                 state['eagle_avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else np.mean(rsi_values)
                 log(f"Precomputed Eagle avg_rsi: {state['eagle_avg_rsi']:.2f} from {len(rsi_values)} valid RSI values")
@@ -944,26 +948,26 @@ def main():
             except Exception as e:
                 log(f"Failed to save price history: {e}")
 
-            # Calculate indicators instantly with sufficient data
+            # Calculate indicators only for current window
             for timeframe, period in [('eagle', 30), ('medium', 600), ('long', 900)]:
                 if current_time - last_indicator_time[timeframe] >= period or all(cached_indicators[timeframe][k] is None for k in cached_indicators[timeframe]):
-                    prices = state[f'rsi_price_history_{timeframe}']
+                    prices = state[f'rsi_price_history_{timeframe}'][-14:] if len(state[f'rsi_price_history_{timeframe}']) >= 14 else state[f'rsi_price_history_{timeframe}']
                     indicators = cached_indicators[timeframe]
                     log(f"Processing {timeframe} with {len(prices)} prices")
-                    indicators['rsi'] = get_current_rsi(prices, period=14) if len(prices) >= 14 else 50.0  # 14-period RSI
-                    if timeframe == 'eagle' and len(prices) >= 34:
-                        rsi_values = [get_current_rsi(prices[i:i+14], period=14) for i in range(max(0, len(prices)-14))]
-                        indicators['avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else (np.mean(rsi_values) if rsi_values else state.get('eagle_avg_rsi', 50.0))
-                        log(f"{timeframe.capitalize()} avg_rsi: {indicators['avg_rsi']:.2f} with {len(rsi_values)} values")
+                    indicators['rsi'] = get_current_rsi(prices, period=14) if len(prices) >= 14 else 50.0
+                    if timeframe == 'eagle' and len(state['rsi_price_history_eagle']) >= 34:
+                        valid_rsi_values = [get_current_rsi(state['rsi_price_history_eagle'][i:i+14], period=14) for i in range(max(0, len(state['rsi_price_history_eagle']) - 14), len(state['rsi_price_history_eagle']) - 14 + 1)]
+                        indicators['avg_rsi'] = np.mean(valid_rsi_values[-20:]) if len(valid_rsi_values) >= 20 else (np.mean(valid_rsi_values) if valid_rsi_values else state.get('eagle_avg_rsi', 50.0))
+                        log(f"{timeframe.capitalize()} avg_rsi: {indicators['avg_rsi']:.2f} with {len(valid_rsi_values)} values")
                     else:
                         indicators['avg_rsi'] = state.get('eagle_avg_rsi', 50.0) if timeframe == 'eagle' else 50.0
-                    macd_result = calculate_macd(prices) if len(prices) >= 34 else (None, None)
+                    macd_result = calculate_macd(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 34 else (None, None)
                     indicators['macd_line'], indicators['signal_line'] = macd_result
-                    indicators['vwap'] = calculate_vwap(prices) if len(prices) >= 20 else None
-                    bb_result = calculate_bollinger_bands(prices) if len(prices) >= 20 else (None, None)
+                    indicators['vwap'] = calculate_vwap(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 20 else None
+                    bb_result = calculate_bollinger_bands(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 20 else (None, None)
                     indicators['upper_bb'], indicators['lower_bb'] = bb_result
-                    indicators['atr'] = calculate_atr(prices) if len(prices) >= 20 else None
-                    indicators['momentum'] = calculate_momentum(prices) if len(prices) >= 2 else 0.0
+                    indicators['atr'] = calculate_atr(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 20 else None
+                    indicators['momentum'] = calculate_momentum(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 2 else 0.0
                     if indicators['atr'] is not None:
                         state[f'atr_history_{timeframe}'] = state.get(f'atr_history_{timeframe}', []) + [indicators['atr']]
                         if len(state[f'atr_history_{timeframe}']) > 50:
@@ -972,7 +976,6 @@ def main():
                     else:
                         indicators['avg_atr'] = 2.5
                     last_indicator_time[timeframe] = current_time
-                    # Fix for formatting error
                     rsi_str = f"{indicators['rsi']:.2f}" if indicators['rsi'] is not None else "N/A"
                     macd_line_str = f"{indicators['macd_line']:.2f}" if indicators['macd_line'] is not None else "N/A"
                     signal_line_str = f"{indicators['signal_line']:.2f}" if indicators['signal_line'] is not None else "N/A"
