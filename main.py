@@ -818,7 +818,7 @@ def main():
     last_stats_time = time.time()
     last_indicator_time = {'eagle': 0, 'medium': 0, 'long': 0}
     cached_indicators = {
-        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5},
+        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_rsi': 50.0, 'avg_atr': 2.5},
         'medium': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5},
         'long': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5}
     }
@@ -936,12 +936,12 @@ def main():
                 if current_time - last_indicator_time[timeframe] >= period or all(cached_indicators[timeframe][k] is None for k in cached_indicators[timeframe]):
                     prices = state[f'rsi_price_history_{timeframe}']
                     indicators = cached_indicators[timeframe]
-                    indicators['rsi'] = get_current_rsi(prices) if len(prices) >= 20 else 50.0
-                    rsi_values = [get_current_rsi(prices[i:i+14]) for i in range(len(prices)-14) if i+14 <= len(prices)]
-                    if timeframe == 'eagle' and len(rsi_values) >= 20:
+                    indicators['rsi'] = get_current_rsi(prices, period=14) if len(prices) >= 20 else 50.0  # Use 14-period RSI
+                    if timeframe == 'eagle' and len(prices) >= 34:  # 14 + 20 for avg_rsi
+                        rsi_values = [get_current_rsi(prices[i:i+14], period=14) for i in range(len(prices)-14) if i+14 <= len(prices)]
                         indicators['avg_rsi'] = np.mean(rsi_values[-20:])  # 20 * 14-period RSI values (~10min)
                     else:
-                        indicators['avg_rsi'] = 50.0  # Default for non-Eagle or insufficient data
+                        indicators['avg_rsi'] = 50.0  # Default if insufficient data
                     macd_result = calculate_macd(prices) if len(prices) >= 34 else (None, None)
                     indicators['macd_line'], indicators['signal_line'] = macd_result
                     indicators['vwap'] = calculate_vwap(prices) if len(prices) >= 20 else None
@@ -1030,7 +1030,7 @@ def main():
                     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
                     # Custom RSI condition for EagleEye
                     if timeframe == 'eagle':
-                        rsi_condition = ind['rsi'] < ind['avg_rsi'] - 5 if ind['avg_rsi'] is not None else False
+                        rsi_condition = ind['rsi'] < ind['avg_rsi'] - 5 if ind['avg_rsi'] is not None and len(state['rsi_price_history_eagle']) >= 34 else False
                     else:
                         rsi_condition = ind['rsi'] < 35
                     if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr']):
