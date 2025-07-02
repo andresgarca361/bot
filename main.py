@@ -741,10 +741,6 @@ def main():
         state['last_buy_price'] = 0
     if 'trailing_stop_price' not in state:
         state['trailing_stop_price'] = 0
-    if 'eagle_avg_rsi' not in state:
-        state['eagle_avg_rsi'] = None  # Will be set as average of last 20 RSI values
-    if 'rsi_history_eagle' not in state:
-        state['rsi_history_eagle'] = []  # To store last 20 RSI values for averaging
     save_state()
 
     # Fetch initial prices from CryptoCompare for extended period (1000 minutes)
@@ -763,14 +759,13 @@ def main():
             log(f"CryptoCompare returned error: {data.get('Message')}")
             raise RuntimeError("CryptoCompare response not successful")
         candles = data.get("Data", {}).get("Data", [])
-        if len(candles) < 34:  # Need at least 34 for 20 RSI periods
-            log(f"Insufficient data from CryptoCompare: {len(candles)}/34")
-            raise RuntimeError("Not enough historical data for RSI")
-        initial_prices = [c["close"] for c in candles if c.get("close") is not None and not np.isnan(c["close"])]
-        initial_prices = initial_prices[-1000:]  # Last 1000 minutes
-        if len(initial_prices) < 34:
-            log(f"Insufficient valid closes: {len(initial_prices)}/34")
-            raise RuntimeError("Invalid or incomplete close data for RSI")
+        if len(candles) < 50:
+            log(f"Insufficient data from CryptoCompare: {len(candles)}/50")
+            raise RuntimeError("Not enough historical data")
+        initial_prices = [c["close"] for c in candles if c.get("close") is not None][-1000:]  # Last 1000 minutes
+        if len(initial_prices) < 50:
+            log(f"Insufficient valid closes: {len(initial_prices)}/50")
+            raise RuntimeError("Invalid or incomplete close data")
         state['price_history'] = initial_prices
         state['last_price'] = initial_prices[-1]
         log(f"Initial prices fetched: {len(state['price_history'])} prices, last price ${state['last_price']:.2f}")
@@ -783,49 +778,31 @@ def main():
         log(f"Initialized rsi_price_history_medium with {len(state['rsi_price_history_medium'])} prices")
         log(f"Initialized rsi_price_history_long with {len(state['rsi_price_history_long'])} prices")
 
-        # Precompute initial eagle_avg_rsi as average of last 20 RSI values
-        RSI_PERIOD = 14
-        if len(initial_prices) >= 34:  # Ensure enough data for 20 RSI calculations
-            rsi_values = []
-            for i in range(-14, -34, -1):  # Last 20 periods of 14 prices from end
-                prices_slice = initial_prices[i:i + RSI_PERIOD]
-                log(f"RSI slice index: {i}, length: {len(prices_slice)}, prices: {prices_slice}")
-                rsi = get_current_rsi(prices_slice, period=RSI_PERIOD)
-                if rsi is not None and not np.isnan(rsi):
-                    rsi_values.append(rsi)
-                else:
-                    log(f"Invalid RSI at index {i}, value: {rsi}")
+        # Precompute warmup indicators for eagle
+        if len(state['rsi_price_history_eagle']) >= 34:
+            rsi_values = [get_current_rsi(state['rsi_price_history_eagle'][i:i+14], period=14) for i in range(len(state['rsi_price_history_eagle']) - 14)]
             if rsi_values:
-                state['eagle_avg_rsi'] = np.mean(rsi_values)
-                state['rsi_history_eagle'] = rsi_values[-20:]  # Initialize with last 20
+                state['eagle_avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else np.mean(rsi_values)
                 log(f"Precomputed Eagle avg_rsi: {state['eagle_avg_rsi']:.2f} from {len(rsi_values)} valid RSI values")
             else:
-                log(f"No valid RSI values computed from {len(initial_prices)} prices, defaulting to 50.0")
                 state['eagle_avg_rsi'] = 50.0
-                state['rsi_history_eagle'] = [50.0] * 20
-        else:
-            log(f"Insufficient prices for initial RSI average ({len(initial_prices)}/34), defaulting to 50.0")
-            state['eagle_avg_rsi'] = 50.0
-            state['rsi_history_eagle'] = [50.0] * 20
+                log("No valid RSI values precomputed, setting Eagle avg_rsi to 50.0")
 
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
         save_state()
     except Exception as e:
-        log(f"Failed to fetch initial prices: {e}, using fallback")
+        log(f"Failed to fetch initial prices from CryptoCompare: {e}, using fallback")
         state['price_history'] = [150.0] * 1000
         state['last_price'] = 150.0
         state['rsi_price_history_eagle'] = state['price_history']
-        state['rsi_price_history_medium'] = [state['price_history'][i] for i in range(0, 1000, 10)]
-        state['rsi_price_history_long'] = [state['price_history'][i] for i in range(0, 1000, 15)]
-        state['eagle_avg_rsi'] = 50.0
-        state['rsi_history_eagle'] = [50.0] * 20
-        log(f"Fallback initial price set to ${state['last_price']:.2f}, avg_rsi set to {state['eagle_avg_rsi']:.2f}")
+        state['rsi_price_history_medium'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 10)]
+        state['rsi_price_history_long'] = [state['price_history'][i] for i in range(0, len(state['price_history']), 15)]
+        log(f"Fallback initial price set to ${state['last_price']:.2f}")
         with open('price_history.json', 'w') as f:
             json.dump({'prices': state['price_history'], 'timestamp': time.time()}, f)
         save_state()
 
-    # Rest of the main function remains unchanged...
     current_time = time.time()
     last_save_time = os.path.getmtime('state.json') if os.path.exists('state.json') else 0
     if last_save_time > 0 and current_time - last_save_time > 48 * 3600:
@@ -851,7 +828,7 @@ def main():
     last_stats_time = time.time()
     last_indicator_time = {'eagle': 0, 'medium': 0, 'long': 0}
     cached_indicators = {
-        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_rsi': state['eagle_avg_rsi'], 'avg_atr': 2.5},
+        'eagle': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_rsi': state.get('eagle_avg_rsi', 50.0), 'avg_atr': 2.5},
         'medium': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5},
         'long': {'rsi': None, 'macd_line': None, 'signal_line': None, 'vwap': None, 'upper_bb': None, 'lower_bb': None, 'atr': None, 'momentum': None, 'avg_atr': 2.5}
     }
@@ -973,15 +950,13 @@ def main():
                     prices = state[f'rsi_price_history_{timeframe}']
                     indicators = cached_indicators[timeframe]
                     log(f"Processing {timeframe} with {len(prices)} prices")
-                    indicators['rsi'] = get_current_rsi(prices, period=RSI_PERIOD) if len(prices) >= RSI_PERIOD else 50.0
-                    if timeframe == 'eagle' and indicators['rsi'] is not None and not np.isnan(indicators['rsi']):
-                        state['rsi_history_eagle'].append(indicators['rsi'])
-                        if len(state['rsi_history_eagle']) > 20:
-                            state['rsi_history_eagle'].pop(0)
-                        state['eagle_avg_rsi'] = np.mean(state['rsi_history_eagle'])
-                        indicators['avg_rsi'] = state['eagle_avg_rsi']
-                    elif timeframe == 'eagle':
-                        indicators['avg_rsi'] = state['eagle_avg_rsi'] or 50.0
+                    indicators['rsi'] = get_current_rsi(prices, period=14) if len(prices) >= 14 else 50.0  # 14-period RSI
+                    if timeframe == 'eagle' and len(prices) >= 34:
+                        rsi_values = [get_current_rsi(prices[i:i+14], period=14) for i in range(max(0, len(prices)-14))]
+                        indicators['avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else (np.mean(rsi_values) if rsi_values else state.get('eagle_avg_rsi', 50.0))
+                        log(f"{timeframe.capitalize()} avg_rsi: {indicators['avg_rsi']:.2f} with {len(rsi_values)} values")
+                    else:
+                        indicators['avg_rsi'] = state.get('eagle_avg_rsi', 50.0) if timeframe == 'eagle' else 50.0
                     macd_result = calculate_macd(prices) if len(prices) >= 34 else (None, None)
                     indicators['macd_line'], indicators['signal_line'] = macd_result
                     indicators['vwap'] = calculate_vwap(prices) if len(prices) >= 20 else None
@@ -997,6 +972,7 @@ def main():
                     else:
                         indicators['avg_atr'] = 2.5
                     last_indicator_time[timeframe] = current_time
+                    # Fix for formatting error
                     rsi_str = f"{indicators['rsi']:.2f}" if indicators['rsi'] is not None else "N/A"
                     macd_line_str = f"{indicators['macd_line']:.2f}" if indicators['macd_line'] is not None else "N/A"
                     signal_line_str = f"{indicators['signal_line']:.2f}" if indicators['signal_line'] is not None else "N/A"
@@ -1005,8 +981,7 @@ def main():
                     lower_bb_str = f"{indicators['lower_bb']:.2f}" if indicators['lower_bb'] is not None else "N/A"
                     atr_str = f"{indicators['atr']:.2f}" if indicators['atr'] is not None else "N/A"
                     momentum_str = f"{indicators['momentum']:.2f}" if indicators['momentum'] is not None else "N/A"
-                    avg_rsi_str = f"{indicators['avg_rsi']:.2f}" if indicators['avg_rsi'] is not None else "N/A"
-                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {rsi_str}, avg_rsi: {avg_rsi_str}, MACD: {macd_line_str}/{signal_line_str}, VWAP: {vwap_str}, BB: {upper_bb_str}/{lower_bb_str}, ATR: {atr_str}, Momentum: {momentum_str}")
+                    log(f"{timeframe.capitalize()} Indicators ({period//60 if period >= 60 else period}s) - RSI: {rsi_str}, avg_rsi: {indicators['avg_rsi']:.2f}, MACD: {macd_line_str}/{signal_line_str}, VWAP: {vwap_str}, BB: {upper_bb_str}/{lower_bb_str}, ATR: {atr_str}, Momentum: {momentum_str}")
 
             if any(ind is None for timeframe in cached_indicators for ind in ['rsi', 'vwap', 'upper_bb', 'lower_bb', 'atr', 'momentum'] if timeframe in cached_indicators):
                 log("Missing critical indicators, skipping")
@@ -1062,15 +1037,17 @@ def main():
             total_usdc_balance = get_usdc_balance()
             log(f"Current balances - SOL: {total_sol_balance:.4f}, USDC: {total_usdc_balance:.4f}")
 
-            # Buy Logic with robust avg_rsi check
+            # Buy Logic
             if current_time >= state['trade_cooldown_until'] and total_usdc_balance > MIN_TRADE_USD:
                 for timeframe, buy_factor, profit_target in [('eagle', 0.3, 3), ('medium', 0.4, 10), ('long', 0.5, 25)]:
                     ind = cached_indicators[timeframe]
                     fee = get_fee_estimate()
                     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
-                    rsi_condition = ind['rsi'] < 35
-                    if timeframe == 'eagle' and ind['avg_rsi'] is not None:  # Robust check
-                        rsi_condition = ind['rsi'] < ind['avg_rsi'] - 5
+                    # Custom RSI condition for EagleEye
+                    if timeframe == 'eagle':
+                        rsi_condition = ind['rsi'] < (ind['avg_rsi'] - 5) if ind['avg_rsi'] is not None else False
+                    else:
+                        rsi_condition = ind['rsi'] < 35
                     if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr']):
                         position_size = min(calculate_position_size(portfolio_value, ind['atr'], ind['avg_atr']) * buy_factor, MAX_POSITION_SOL - state['position'])
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + fee) <= total_usdc_balance and bid_ask_spread < 0.005:
