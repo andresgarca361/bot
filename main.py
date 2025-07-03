@@ -1112,7 +1112,6 @@ def main():
             time.sleep(TRADE_INTERVAL)
             continue
 
-
 # Ensure get_current_rsi supports custom period (already updated)
 def tcp_health_check():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
