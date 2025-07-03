@@ -781,10 +781,9 @@ def main():
             rsi_values = []
             for i in range(len(state['rsi_price_history_eagle']) - 14 + 1):
                 slice_prices = state['rsi_price_history_eagle'][i:i+14]
-                if len(set(slice_prices)) >= 2:  # Ensure variation in slice
-                    rsi = get_current_rsi(slice_prices, period=14)
-                    if rsi is not None:
-                        rsi_values.append(rsi)
+                rsi = get_current_rsi(slice_prices, period=14)
+                if rsi != 50.0:  # Only append if there's variation
+                    rsi_values.append(rsi)
             if rsi_values:
                 state['eagle_avg_rsi'] = np.mean(rsi_values[-20:]) if len(rsi_values) >= 20 else np.mean(rsi_values)
                 log(f"Precomputed Eagle avg_rsi: {state['eagle_avg_rsi']:.2f} from {len(rsi_values)} valid RSI values")
@@ -960,7 +959,9 @@ def main():
                     else:
                         cached_indicators[timeframe]['rsi'] = get_current_rsi(prices, period=14)
                     if timeframe == 'eagle' and len(state['rsi_price_history_eagle']) >= 34:
-                        valid_rsi_values = [get_current_rsi(state['rsi_price_history_eagle'][i:i+14], period=14) for i in range(max(0, len(state['rsi_price_history_eagle']) - 34), len(state['rsi_price_history_eagle']) - 14 + 1) if len(set(state['rsi_price_history_eagle'][i:i+14])) >= 2]
+                        valid_rsi_values = [get_current_rsi(state['rsi_price_history_eagle'][i:i+14], period=14) 
+                                          for i in range(max(0, len(state['rsi_price_history_eagle']) - 34), len(state['rsi_price_history_eagle']) - 14 + 1) 
+                                          if len(set(state['rsi_price_history_eagle'][i:i+14])) >= 2]
                         cached_indicators[timeframe]['avg_rsi'] = np.mean(valid_rsi_values[-20:]) if valid_rsi_values and len(valid_rsi_values) >= 20 else (np.mean(valid_rsi_values) if valid_rsi_values else state.get('eagle_avg_rsi', 50.0))
                         log(f"{timeframe.capitalize()} avg_rsi: {cached_indicators[timeframe]['avg_rsi']:.2f} with {len(valid_rsi_values)} values")
                     else:
