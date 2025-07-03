@@ -309,8 +309,8 @@ def get_fee_estimate():
 
 # Indicator Functions
 def get_current_rsi(prices, period=14):
-    if len(prices) < period or len(set(prices)) < 2:
-        log("Not enough unique prices for RSI calculation, returning 50.0")
+    if len(prices) < period:
+        log("Not enough prices for RSI calculation, returning 50.0")
         return 50.0
     prices = np.array(prices)
     deltas = np.diff(prices)
@@ -318,16 +318,15 @@ def get_current_rsi(prices, period=14):
     losses = np.where(deltas < 0, -deltas, 0)
     avg_gain = np.mean(gains[:period]) if period <= len(gains) else 0
     avg_loss = np.mean(losses[:period]) if period <= len(losses) else 0
-    if avg_loss == 0 and avg_gain == 0:
-        log("No price movement detected, returning 50.0")
+    if avg_loss == 0 and avg_gain == 0:  # Only trigger if truly no movement
+        log("No price movement detected across all periods, returning 50.0")
         return 50.0
     if avg_loss == 0:
         avg_loss = 0.0001  # Prevent division by zero
-    rs = avg_gain / avg_loss if avg_loss > 0 else 100 if avg_gain > 0 else 0
-    rsi = 100 - (100 / (1 + rs)) if rs > 0 else 50.0  # Fallback to 50 if rs is invalid
-    log(f"Current RSI calculated: {rsi:.2f} with period {period}")
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    log(f"Current RSI calculated: {rsi:.2f} with period {period}, avg_gain={avg_gain:.4f}, avg_loss={avg_loss:.4f}")
     return rsi
-
 def calculate_rsi(prices, period=20):  # Increased from 14 to 20
     if len(prices) < period + 1:
         log("Not enough prices for RSI calculation")
