@@ -965,7 +965,10 @@ def main():
                         log(f"{timeframe.capitalize()} avg_rsi: {cached_indicators[timeframe]['avg_rsi']:.2f} with {len(valid_rsi_values)} values")
                     else:
                         cached_indicators[timeframe]['avg_rsi'] = state.get('eagle_avg_rsi', 50.0) if timeframe == 'eagle' else 50.0
-                    macd_result = calculate_macd(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 34 else (None, None)
+                    if timeframe == 'eagle':
+                        macd_result = calculate_macd(state[f'rsi_price_history_{timeframe}'], fast=6, slow=12, signal=3) if len(state[f'rsi_price_history_{timeframe}']) >= 12 else (None, None)
+                    else:
+                        macd_result = calculate_macd(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 34 else (None, None)
                     cached_indicators[timeframe]['macd_line'], cached_indicators[timeframe]['signal_line'] = macd_result
                     cached_indicators[timeframe]['vwap'] = calculate_vwap(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 20 else None
                     bb_result = calculate_bollinger_bands(state[f'rsi_price_history_{timeframe}']) if len(state[f'rsi_price_history_{timeframe}']) >= 20 else (None, None)
