@@ -444,7 +444,7 @@ def adjust_triggers(atr, avg_atr, rsi):
         BASE_SELL_TRIGGER = max(2.5, BASE_SELL_TRIGGER - 0.5)
         log(f"Extreme RSI, triggers: buy={BASE_BUY_TRIGGER}%, sell={BASE_SELL_TRIGGER}%")
 
-def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr):
+def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr, timeframe):  # Added timeframe parameter
     if any(x is None for x in [rsi, macd_line, signal_line, vwap, lower_bb, momentum, atr, avg_atr]):
         log("Missing or invalid indicators, skipping buy")
         return False
@@ -461,7 +461,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
         log(f"Bid-ask spread too high ({bid_ask_spread*100:.2f}%), skipping buy")
         return False
     multiplier = 1.1 if signal_line < 0 else 0.9
-    if rsi >= 35 or macd_line <= signal_line * multiplier:
+    if timeframe != 'eagle' and rsi >= 35 or macd_line <= signal_line * multiplier:  # Bypass rsi >= 35 for Eagle
         log(f"Core conditions failed: RSI={rsi:.2f}, MACD={macd_line:.4f}<={signal_line:.4f}")
         return False
     momentum_weight = 0.4
@@ -474,7 +474,6 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
     signal = total_score >= 0.3
     log(f"Buy signal check: {'True' if signal else 'False'} (RSI={rsi:.2f}, MACD={macd_line:.4f}>{signal_line:.4f}, Score={total_score:.2f})")
     return signal
-
 def calculate_position_size(portfolio_value, atr, avg_atr):
     log("Calculating position size...")
     if atr is None or avg_atr is None or avg_atr == 0:
@@ -1056,7 +1055,7 @@ def main():
                         rsi_condition = ind['rsi'] < (ind['avg_rsi'] - 5) if ind['avg_rsi'] is not None else False
                     else:
                         rsi_condition = ind['rsi'] < 35
-                    if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr']):
+                    if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr'], timeframe):
                         position_size = min(calculate_position_size(portfolio_value, ind['atr'], ind['avg_atr']) * buy_factor, MAX_POSITION_SOL - state['position'])
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + fee) <= total_usdc_balance and bid_ask_spread < 0.005:
                             execute_buy(position_size)
