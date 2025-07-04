@@ -283,29 +283,7 @@ def get_portfolio_value(price):
     return value
 
 def get_fee_estimate():
-    current_time = time.time()
-    if current_time - state['last_fee_update'] < 180:
-        log(f"Using cached fee: {state['cached_fee']*100:.2f}%")
-        return state['cached_fee']
-    log("Fetching new fee estimate...")
-    try:
-        url = f"https://quote-api.jup.ag/v6/quote?inputMint={USDC_MINT}&outputMint={SOL_MINT}&amount=1000000&slippageBps={int(SLIPPAGE * 10000)}"
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            in_amount = int(data['inAmount'])
-            out_amount = int(data['outAmount'])
-            current_price = fetch_current_price()
-            if current_price:
-                fee = (in_amount - out_amount * current_price) / in_amount
-                state['cached_fee'] = max(0.002, min(fee, 0.005))
-                state['last_fee_update'] = current_time
-                log(f"New fee: {state['cached_fee']*100:.2f}%")
-                return state['cached_fee']
-        log(f"Fee fetch failed: Status {response.status_code}")
-    except Exception as e:
-        log(f"Fee fetch error: {e}")
-    return state['cached_fee']
+    return 0.00035
 
 # Indicator Functions
 def get_current_rsi(prices, period=14):
@@ -1053,21 +1031,20 @@ def main():
                     ind = cached_indicators[timeframe]
                     fee = get_fee_estimate()
                     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
-                    # Custom RSI condition for EagleEye
                     if timeframe == 'eagle':
                         rsi_condition = ind['rsi'] < (ind['avg_rsi'] - 5) if ind['avg_rsi'] is not None else False
                     else:
                         rsi_condition = ind['rsi'] < 35
                     if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr'], timeframe):
-                        target_usdc = portfolio_value * 0.1  # 10% of portfolio value in USDC
-                        position_size = min(target_usdc / price, total_usdc_balance / (price * (1 + SLIPPAGE + fee)))  # Convert to SOL, limit by available USDC
-                        if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:  # Sell all if too small but have USDC
-                            position_size = total_usdc_balance / (price * (1 + SLIPPAGE + fee))
-                        if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + fee) <= total_usdc_balance and bid_ask_spread < 0.005:
+                        target_usdc = portfolio_value * 0.1
+                        position_size = min(target_usdc / price, total_usdc_balance / (price * (1 + SLIPPAGE + get_fee_estimate() / price)))  # Adjusted for flat fee
+                        if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:
+                            position_size = total_usdc_balance / (price * (1 + SLIPPAGE + get_fee_estimate() / price))
+                        if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + get_fee_estimate() / price) <= total_usdc_balance and bid_ask_spread < 0.005:
                             execute_buy(position_size)
-                            set_sell_targets(position_size, price)
                             time.sleep(10)
-                            state['last_buy_price'] = price
+                            state['position'] += position_size
+                            state.setdefault('buy_orders', []).append({'amount': position_size, 'buy_price': price, 'timeframe': timeframe})
                             state['trade_cooldown_until'] = current_time + 2
                             state['trailing_stop_price'] = price * (1 - 0.03)
                             state['highest_price'] = price
@@ -1076,36 +1053,44 @@ def main():
 
             # Sell Logic
             if total_sol_balance > MIN_SOL_THRESHOLD and state['position'] > 0:
-                profit_percent = ((price - state['last_buy_price']) / state['last_buy_price'] * 100) if state['last_buy_price'] else 0
+                fee = get_fee_estimate()
                 if price > state['highest_price']:
                     state['highest_price'] = price
                     state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - 0.01))
                 for timeframe, sell_factor, profit_target in [('eagle', 0.2, 1), ('medium', 0.3, 5), ('long', 0.5, 20)]:
                     ind = cached_indicators[timeframe]
-                    sell_condition = (price <= state['trailing_stop_price'] or (ind['macd_line'] < ind['signal_line'] and profit_percent > profit_target / 2) or profit_percent >= profit_target)
-                    if timeframe == 'eagle':
-                        sell_condition = (price <= state['trailing_stop_price'] or (ind['macd_line'] < ind['signal_line'] and profit_percent > 1.0) or profit_percent >= 2.0)
-                    if timeframe == 'medium' and not (cached_indicators['long']['rsi'] < 50 or profit_percent >= 10):
-                        sell_condition = False
-                    if sell_condition and state['sell_targets']:
-                        target_percent = {'eagle': 0.1, 'medium': 0.15, 'long': 0.20}  # Add this new line
-                        target_sol = portfolio_value * target_percent[timeframe] / price  # Replace with this
-                        sell_amount = min(target_sol, state['position'])  # Limit by position
-                        if sell_amount < 0.001 and total_sol_balance > MIN_SOL_THRESHOLD:  # Sell all if too small but have SOL
-                            sell_amount = max(total_sol_balance - MIN_SOL_THRESHOLD, 0)
+                    sell_condition = False
+                    sell_amount = 0
+                    buy_to_sell = None
+                    for buy_order in state.get('buy_orders', []):
+                        buy_profit_target = {'eagle': 1, 'medium': 5, 'long': 20}[buy_order['timeframe']]
+                        net_profit_percent = ((price - buy_order['buy_price'] - fee * 2) / buy_order['buy_price'] * 100) if buy_order['buy_price'] else 0
+                        if net_profit_percent >= buy_profit_target or (net_profit_percent > 0 and buy_order['timeframe'] in ['eagle', 'medium']):
+                            sell_condition = True
+                            sell_amount = buy_order['amount']
+                            buy_to_sell = buy_order
+                            break
+                    if not sell_condition and price <= state['trailing_stop_price'] and state['buy_orders']:
+                        sell_condition = True
+                        sell_amount = min(state['buy_orders'][0]['amount'], state['position'])
+                        buy_to_sell = state['buy_orders'][0]
+                    if sell_condition:
+                        sell_amount = min(sell_amount, state['position'])
                         if sell_amount > 0.001:
                             execute_sell(sell_amount, price)
                             time.sleep(10)
-                            profit = (price - state['last_buy_price']) * sell_amount - (get_fee_estimate() * price * sell_amount * 2)
+                            profit = (price - buy_to_sell['buy_price']) * sell_amount - (get_fee_estimate() * 2)  # Flat fee for buy + sell
+                            state['position'] -= sell_amount
                             state['total_profit'] = state.get('total_profit', 0) + profit
+                            state['buy_orders'].remove(buy_to_sell)
                             state['trade_cooldown_until'] = current_time + 2
-                            log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL, Profit: ${profit:.2f}")
+                            log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL @ ${price:.2f}, Profit: ${profit:.2f}, Buy Price: ${buy_to_sell['buy_price']:.2f}, Timeframe: {buy_to_sell['timeframe']}")
                             save_state()
                             if state['position'] <= 0.001:
                                 state['position'] = 0
                                 state['highest_price'] = 0
                                 state['trailing_stop_price'] = 0
-                                state['sell_targets'] = []
+                                state['buy_orders'] = []
 
             if current_time - last_stats_time >= 3600:
                 log_performance(portfolio_value)
