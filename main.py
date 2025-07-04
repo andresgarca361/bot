@@ -1079,8 +1079,8 @@ def main():
                 profit_percent = ((price - state['last_buy_price']) / state['last_buy_price'] * 100) if state['last_buy_price'] else 0
                 if price > state['highest_price']:
                     state['highest_price'] = price
-                    state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - 0.015))
-                for timeframe, sell_factor, profit_target in [('eagle', 0.2, 3), ('medium', 0.3, 10), ('long', 0.5, 25)]:
+                    state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - 0.01))
+                for timeframe, sell_factor, profit_target in [('eagle', 0.2, 1), ('medium', 0.3, 5), ('long', 0.5, 20)]:
                     ind = cached_indicators[timeframe]
                     sell_condition = (price <= state['trailing_stop_price'] or (ind['macd_line'] < ind['signal_line'] and profit_percent > profit_target / 2) or profit_percent >= profit_target)
                     if timeframe == 'eagle':
@@ -1088,7 +1088,8 @@ def main():
                     if timeframe == 'medium' and not (cached_indicators['long']['rsi'] < 50 or profit_percent >= 10):
                         sell_condition = False
                     if sell_condition and state['sell_targets']:
-                        target_sol = portfolio_value * 0.1 / price  # 10% of portfolio value in SOL
+                        target_percent = {'eagle': 0.1, 'medium': 0.15, 'long': 0.20}  # Add this new line
+                        target_sol = portfolio_value * target_percent[timeframe] / price  # Replace with this
                         sell_amount = min(target_sol, state['position'])  # Limit by position
                         if sell_amount < 0.001 and total_sol_balance > MIN_SOL_THRESHOLD:  # Sell all if too small but have SOL
                             sell_amount = max(total_sol_balance - MIN_SOL_THRESHOLD, 0)
