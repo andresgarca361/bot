@@ -1059,7 +1059,10 @@ def main():
                     else:
                         rsi_condition = ind['rsi'] < 35
                     if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr'], timeframe):
-                        position_size = min(calculate_position_size(portfolio_value, ind['atr'], ind['avg_atr']) * buy_factor, MAX_POSITION_SOL - state['position'])
+                        target_usdc = portfolio_value * 0.1  # 10% of portfolio value in USDC
+                        position_size = min(target_usdc / price, total_usdc_balance / (price * (1 + SLIPPAGE + fee)))  # Convert to SOL, limit by available USDC
+                        if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:  # Sell all if too small but have USDC
+                            position_size = total_usdc_balance / (price * (1 + SLIPPAGE + fee))
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + fee) <= total_usdc_balance and bid_ask_spread < 0.005:
                             execute_buy(position_size)
                             set_sell_targets(position_size, price)
@@ -1085,7 +1088,10 @@ def main():
                     if timeframe == 'medium' and not (cached_indicators['long']['rsi'] < 50 or profit_percent >= 10):
                         sell_condition = False
                     if sell_condition and state['sell_targets']:
-                        sell_amount = min(state['position'] * sell_factor, state['position'])
+                        target_sol = portfolio_value * 0.1 / price  # 10% of portfolio value in SOL
+                        sell_amount = min(target_sol, state['position'])  # Limit by position
+                        if sell_amount < 0.001 and total_sol_balance > MIN_SOL_THRESHOLD:  # Sell all if too small but have SOL
+                            sell_amount = max(total_sol_balance - MIN_SOL_THRESHOLD, 0)
                         if sell_amount > 0.001:
                             execute_sell(sell_amount, price)
                             time.sleep(10)
