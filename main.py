@@ -431,7 +431,7 @@ def check_buy_signal(price, rsi, macd_line, signal_line, vwap, lower_bb, momentu
         log(f"Invalid indicator values: RSI={rsi}, MACD={macd_line}, Signal={signal_line}, skipping buy")
         return False
     fee = get_fee_estimate()
-    if fee > 0.0035:
+    if fee > 0.002:
         log(f"Fees too high ({fee*100:.2f}%), skipping buy")
         return False
     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
@@ -1040,7 +1040,7 @@ def main():
                         target_usdc = portfolio_value * 0.1
                         position_size = min(target_usdc / price, (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE)))  # Adjusted for flat fee
                         if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:
-                            position_size = total_usdc_balance / (price * (1 + SLIPPAGE + get_fee_estimate() / price))
+                            position_size = (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE))
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + get_fee_estimate() / price) <= total_usdc_balance and bid_ask_spread < 0.005:
                             execute_buy(position_size)
                             time.sleep(10)
@@ -1049,6 +1049,8 @@ def main():
                             state['trade_cooldown_until'] = current_time + 2
                             if not state.get('trailing_stop_price'):
                                 state['trailing_stop_price'] = price * (1 - 0.03)
+                            if state['position'] <= 0.001:  # Reset if position was previously closed
+                                state['trailing_stop_price'] = 0
                             state['highest_price'] = price
                             log(f"{timeframe.capitalize()} Buy: {position_size:.4f} SOL, Position: {state['position']:.4f} SOL, RSI: {ind['rsi']:.2f}")
                             save_state()
