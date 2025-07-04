@@ -471,7 +471,7 @@ def calculate_position_size(portfolio_value, atr, avg_atr):
     min_size_sol = max(MIN_TRADE_USD / price, 0.0001)
     max_size_sol = min(MAX_POSITION_SOL, 0.2 * portfolio_value / price)
     size_sol = max(min_size_sol, min(size_usd / price, max_size_sol))
-    usdc_needed = size_sol * price * (1 + SLIPPAGE + get_fee_estimate())
+    usdc_needed = size_sol * price * (1 + SLIPPAGE) + get_fee_estimate()
     if get_usdc_balance() < usdc_needed:
         log(f"Not enough USDC: need {usdc_needed:.2f}, have {get_usdc_balance():.2f}")
         return 0
@@ -1041,7 +1041,7 @@ def main():
                         position_size = min(target_usdc / price, (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE)))  # Adjusted for flat fee
                         if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:
                             position_size = (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE))
-                        if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + get_fee_estimate() / price) <= total_usdc_balance and bid_ask_spread < 0.005:
+                        if position_size > 0.001 and position_size * price * (1 + SLIPPAGE) + get_fee_estimate() <= total_usdc_balance and bid_ask_spread < 0.005:
                             execute_buy(position_size)
                             time.sleep(10)
                             state['position'] += position_size
