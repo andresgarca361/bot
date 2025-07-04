@@ -645,8 +645,8 @@ def execute_sell(amount, price):
         if tx_id:
             sol_sold = in_amount / 1e9
             usdc_received = out_amount / 1e6
-            fee = get_fee_estimate()
-            fee_amount = usdc_received * fee
+            fee = get_fee_estimate() * 2  # Total flat fee for buy + sell
+            fee_amount = fee  # Use flat amount
             profit = (usdc_received - fee_amount) - (sol_sold * state['entry_price'])
             state['position'] -= sol_sold
             state['total_trades'] += 1
@@ -1038,7 +1038,7 @@ def main():
                         rsi_condition = ind['rsi'] < 35
                     if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr'], timeframe):
                         target_usdc = portfolio_value * 0.1
-                        position_size = min(target_usdc / price, total_usdc_balance / (price * (1 + SLIPPAGE + get_fee_estimate() / price)))  # Adjusted for flat fee
+                        position_size = min(target_usdc / price, (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE)))  # Adjusted for flat fee
                         if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:
                             position_size = total_usdc_balance / (price * (1 + SLIPPAGE + get_fee_estimate() / price))
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE + get_fee_estimate() / price) <= total_usdc_balance and bid_ask_spread < 0.005:
@@ -1047,7 +1047,8 @@ def main():
                             state['position'] += position_size
                             state.setdefault('buy_orders', []).append({'amount': position_size, 'buy_price': price, 'timeframe': timeframe})
                             state['trade_cooldown_until'] = current_time + 2
-                            state['trailing_stop_price'] = price * (1 - 0.03)
+                            if not state.get('trailing_stop_price'):
+                                state['trailing_stop_price'] = price * (1 - 0.03)
                             state['highest_price'] = price
                             log(f"{timeframe.capitalize()} Buy: {position_size:.4f} SOL, Position: {state['position']:.4f} SOL, RSI: {ind['rsi']:.2f}")
                             save_state()
