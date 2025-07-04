@@ -85,7 +85,7 @@ state = {
     'sell_targets': [],
     'highest_price': 0.0,
     'peak_portfolio': 0.0,
-    'peak_market_value': 0.0,  # Ensure this is present
+    'peak_market_value': 0.0,
     'pause_until': 0,
     'buy_pause_until': 0,
     'sell_pause_until': 0,
@@ -107,6 +107,7 @@ state = {
     'trade_cooldown_until': 0,
     'peak_timestamp': 0,
     'version': "1.0",
+    'buy_orders': []  # Added
 }
 
 
@@ -283,7 +284,7 @@ def get_portfolio_value(price):
     return value
 
 def get_fee_estimate():
-    return 0.00035
+    return 0.002
 
 # Indicator Functions
 def get_current_rsi(prices, period=14):
