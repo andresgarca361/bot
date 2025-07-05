@@ -1068,8 +1068,9 @@ def main():
                     buy_to_sell = None
                     for buy_order in state.get('buy_orders', []):
                         buy_profit_target = {'eagle': 1, 'medium': 5, 'long': 20}[buy_order['timeframe']]
-                        net_profit_percent = ((price - buy_order['buy_price'] - fee * 2) / buy_order['buy_price'] * 100) if buy_order['buy_price'] else 0
-                        if net_profit_percent >= buy_profit_target or (net_profit_percent > 0 and buy_order['timeframe'] in ['eagle', 'medium']):
+                        net_profit_percent = ((price - buy_order['buy_price'] - get_fee_estimate() * 2) / buy_order['buy_price'] * 100) if buy_order['buy_price'] else 0
+                        buy_profit_target = {'eagle': 0.5, 'medium': 5, 'long': 20}[buy_order['timeframe']]  # Explicitly define targets
+                        if net_profit_percent >= buy_profit_target:  # Use timeframe-specific target
                             sell_condition = True
                             sell_amount = buy_order['amount']
                             buy_to_sell = buy_order
