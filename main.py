@@ -1033,7 +1033,7 @@ def main():
                     fee = get_fee_estimate()
                     bid_ask_spread = abs(fetch_current_price() - price) / price if price else 0.01
                     if timeframe == 'eagle':
-                        rsi_condition = ind['rsi'] < (ind['avg_rsi'] - 5) if ind['avg_rsi'] is not None else False
+                        rsi_condition = ind['rsi'] < (ind['avg_rsi'] - 10) if ind['avg_rsi'] is not None else False
                     else:
                         rsi_condition = ind['rsi'] < 35
                     if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr'], timeframe):
