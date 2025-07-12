@@ -580,11 +580,12 @@ def send_trade(route, current_price):
         tx_id = result.value
         log(f"Trade sent: tx_id={tx_id}")
         time.sleep(10)  # Increased from 5 to 10 seconds for network sync
-        # Add confirmation step
+        # Updated confirmation step
         from solana.rpc.api import Client
-        confirmation = client.confirm_transaction(tx_id)
-        if confirmation["result"]["confirmationStatus"] != "finalized" or confirmation["result"]["err"]:
-            log(f"Transaction confirmation failed: {confirmation}")
+        from solders.signature import Signature
+        confirmation = client.get_signature_statuses([Signature.from_string(tx_id)], search_transaction_history=True)
+        if "result" not in confirmation or not confirmation["result"].value or confirmation["result"].value[0].get("err"):
+            log(f"Confirmation issue: {confirmation}")
             return None, 0, 0
         log(f"✅ Trade confirmed: tx_id={tx_id}")
         in_amount = int(route['inAmount'])
