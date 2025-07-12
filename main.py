@@ -18,6 +18,8 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from solders.message import to_bytes_versioned
+from retry import retry
+from solders.signature import Signature
 
 # Logging setup
 logger = logging.getLogger('TradingBot')
@@ -506,6 +508,7 @@ def get_route(from_mint, to_mint, amount):
         log(f"Route fetch error: {e}, Response: {response.text if 'response' in locals() else 'No response'}")
         return None
 
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5))
 def send_trade(route, current_price):
     log("Sending trade...")
@@ -519,7 +522,7 @@ def send_trade(route, current_price):
     
     # Step 1: Send request to Jupiter API
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        response = post(url, json=payload, timeout=10)
         if response.status_code != 200:
             log(f"Trade failed: Status {response.status_code}, Response: {response.text}")
             return None, 0, 0
@@ -546,16 +549,16 @@ def send_trade(route, current_price):
         log(f"Failed to parse transaction: {e}")
         return None, 0, 0
 
-    # Step 4: Serialize message for signing using to_bytes_versioned
+    # Step 4: Serialize message for signing
     try:
-        message_bytes = to_bytes_versioned(tx.message)  # Correct method for solders==0.21.0
+        message_bytes = to_bytes_versioned(tx.message)  # Assumes to_bytes_versioned is imported
     except Exception as e:
         log(f"Message serialization failed: {e}")
         return None, 0, 0
 
     # Step 5: Sign the message
     try:
-        signature = keypair.sign_message(message_bytes)
+        signature = keypair.sign_message(message_bytes)  # Assumes keypair is defined
     except Exception as e:
         log(f"Signing failed: {e}")
         return None, 0, 0
@@ -574,26 +577,32 @@ def send_trade(route, current_price):
         log(f"Transaction serialization failed: {e}")
         return None, 0, 0
 
-    # Step 8: Send transaction
+    # Step 8: Send and confirm transaction
     try:
+        client = Client("https://api.mainnet-beta.solana.com")  # Replace with your RPC if different
         result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
-        tx_id = result.value
-        log(f"Trade sent: tx_id={tx_id}")
-        time.sleep(10)  # Increased from 5 to 10 seconds for network sync
-        # Updated confirmation step
-        from solana.rpc.api import Client
-        from solders.signature import Signature
-        confirmation = client.get_signature_statuses([Signature.from_string(tx_id)], search_transaction_history=True)
-        if not confirmation["result"].value or not confirmation["result"].value[0] or confirmation["result"].value[0].err is not None:
-            log(f"Confirmation issue: {confirmation}")
+        tx_id = result.value  # This is a Signature object
+        log(f"Trade sent: tx_id={str(tx_id)}")  # Log as string for readability
+        sleep(10)  # Wait for network sync
+
+        # Confirm transaction
+        confirmation = client.get_signature_statuses([tx_id], search_transaction_history=True)
+        if (confirmation.value and 
+            confirmation.value[0] and 
+            confirmation.value[0].confirmation_status == "finalized" and 
+            confirmation.value[0].err is None):
+            log(f"✅ Trade confirmed: tx_id={str(tx_id)}")
+            in_amount = int(route['inAmount'])
+            out_amount = int(route['outAmount'])
+            return str(tx_id), in_amount, out_amount  # Return tx_id as string
+        else:
+            log(f"Confirmation issue: status={confirmation.value[0].confirmation_status if confirmation.value and confirmation.value[0] else 'None'}, error={confirmation.value[0].err if confirmation.value and confirmation.value[0] else 'None'}")
             return None, 0, 0
-        log(f"✅ Trade confirmed: tx_id={tx_id}")
-        in_amount = int(route['inAmount'])
-        out_amount = int(route['outAmount'])
-        return tx_id, in_amount, out_amount
     except Exception as e:
         log(f"Transaction submission failed: {e}")
         return None, 0, 0
+
+
 def execute_buy(position_size):
     log(f"Executing buy: {position_size:.4f} SOL")
     price = fetch_current_price()
