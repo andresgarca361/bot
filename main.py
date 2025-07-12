@@ -18,7 +18,7 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from solders.message import to_bytes_versioned
-from retry import retry
+
 from solders.signature import Signature
 
 # Logging setup
