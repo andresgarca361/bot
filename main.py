@@ -580,13 +580,19 @@ def send_trade(route, current_price):
         tx_id = result.value
         log(f"Trade sent: tx_id={tx_id}")
         time.sleep(10)  # Increased from 5 to 10 seconds for network sync
+        # Add confirmation step
+        from solana.rpc.api import Client
+        confirmation = client.confirm_transaction(tx_id)
+        if confirmation["result"]["confirmationStatus"] != "finalized" or confirmation["result"]["err"]:
+            log(f"Transaction confirmation failed: {confirmation}")
+            return None, 0, 0
+        log(f"✅ Trade confirmed: tx_id={tx_id}")
         in_amount = int(route['inAmount'])
         out_amount = int(route['outAmount'])
         return tx_id, in_amount, out_amount
     except Exception as e:
         log(f"Transaction submission failed: {e}")
         return None, 0, 0
-
 def execute_buy(position_size):
     log(f"Executing buy: {position_size:.4f} SOL")
     price = fetch_current_price()
