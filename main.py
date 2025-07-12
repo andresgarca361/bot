@@ -522,7 +522,7 @@ def send_trade(route, current_price):
     
     # Step 1: Send request to Jupiter API
     try:
-        response = post(url, json=payload, timeout=10)
+        response = requests.post(url, json=payload, timeout=10)  # Changed from post to requests.post
         if response.status_code != 200:
             log(f"Trade failed: Status {response.status_code}, Response: {response.text}")
             return None, 0, 0
@@ -551,14 +551,14 @@ def send_trade(route, current_price):
 
     # Step 4: Serialize message for signing
     try:
-        message_bytes = to_bytes_versioned(tx.message)  # Assumes to_bytes_versioned is imported
+        message_bytes = to_bytes_versioned(tx.message)
     except Exception as e:
         log(f"Message serialization failed: {e}")
         return None, 0, 0
 
     # Step 5: Sign the message
     try:
-        signature = keypair.sign_message(message_bytes)  # Assumes keypair is defined
+        signature = keypair.sign_message(message_bytes)
     except Exception as e:
         log(f"Signing failed: {e}")
         return None, 0, 0
@@ -579,14 +579,15 @@ def send_trade(route, current_price):
 
     # Step 8: Send and confirm transaction
     try:
-        client = Client("https://api.mainnet-beta.solana.com")  # Replace with your RPC if different
+        global client
         result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
-        tx_id = result.value  # This is a Signature object
-        log(f"Trade sent: tx_id={str(tx_id)}")  # Log as string for readability
-        sleep(10)  # Wait for network sync
+        tx_id = result.value
+        log(f"Trade sent: tx_id={str(tx_id)}")
+        sleep(15)
 
         # Confirm transaction
         confirmation = client.get_signature_statuses([tx_id], search_transaction_history=True)
+        log(f"Confirmation raw: {confirmation.__dict__}")
         if (confirmation.value and 
             confirmation.value[0] and 
             confirmation.value[0].confirmation_status == "finalized" and 
@@ -594,14 +595,13 @@ def send_trade(route, current_price):
             log(f"✅ Trade confirmed: tx_id={str(tx_id)}")
             in_amount = int(route['inAmount'])
             out_amount = int(route['outAmount'])
-            return str(tx_id), in_amount, out_amount  # Return tx_id as string
+            return str(tx_id), in_amount, out_amount
         else:
             log(f"Confirmation issue: status={confirmation.value[0].confirmation_status if confirmation.value and confirmation.value[0] else 'None'}, error={confirmation.value[0].err if confirmation.value and confirmation.value[0] else 'None'}")
             return None, 0, 0
     except Exception as e:
         log(f"Transaction submission failed: {e}")
         return None, 0, 0
-
 
 def execute_buy(position_size):
     log(f"Executing buy: {position_size:.4f} SOL")
