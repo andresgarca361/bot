@@ -584,7 +584,7 @@ def send_trade(route, current_price):
         from solana.rpc.api import Client
         from solders.signature import Signature
         confirmation = client.get_signature_statuses([Signature.from_string(tx_id)], search_transaction_history=True)
-        if "result" not in confirmation or not confirmation["result"].value or confirmation["result"].value[0].get("err"):
+        if not confirmation["result"].value or not confirmation["result"].value[0] or confirmation["result"].value[0].err is not None:
             log(f"Confirmation issue: {confirmation}")
             return None, 0, 0
         log(f"✅ Trade confirmed: tx_id={tx_id}")
