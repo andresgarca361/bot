@@ -590,11 +590,12 @@ def send_trade(route, current_price):
         confirmation = client.get_signature_statuses([tx_id], search_transaction_history=True)
         log(f"Confirmation raw: {confirmation.value if confirmation.value else 'No confirmation data'}")
         
-        # Robust status check with string comparison
+        # Robust status check with confirmed or finalized
         if (confirmation.value and 
             len(confirmation.value) > 0 and 
             hasattr(confirmation.value[0], 'confirmation_status') and 
-            "finalized" in str(confirmation.value[0].confirmation_status).lower() and 
+            ("confirmed" in str(confirmation.value[0].confirmation_status).lower() or 
+             "finalized" in str(confirmation.value[0].confirmation_status).lower()) and 
             hasattr(confirmation.value[0], 'err') and 
             confirmation.value[0].err is None):
             log(f"✅ Trade confirmed: tx_id={str(tx_id)}")
