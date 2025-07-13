@@ -12,7 +12,7 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 from base64 import b64decode
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_result
 from ratelimit import limits, sleep_and_retry
 import socket
 import threading
@@ -584,10 +584,17 @@ def send_trade(route, current_price):
         result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
         tx_id = result.value
         log(f"Trade sent: tx_id={str(tx_id)}")
-        time.sleep(15)
+        time.sleep(30)  # Increased to 30 seconds for better RPC propagation
 
-        # Confirm transaction with corrected logging
-        confirmation = client.get_signature_statuses([tx_id], search_transaction_history=True)
+        def is_none_result(result):
+            return result.value == [None] if result.value else True
+
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_result(is_none_result))
+        def get_confirmation(tx_id):
+            return client.get_signature_statuses([tx_id], search_transaction_history=True)
+
+        # Confirm transaction with retry logic
+        confirmation = get_confirmation(tx_id)
         log(f"Confirmation raw: {confirmation.value if confirmation.value else 'No confirmation data'}")
         
         # Robust status check with confirmed or finalized
@@ -610,7 +617,6 @@ def send_trade(route, current_price):
     except Exception as e:
         log(f"Transaction submission failed: {e}")
         return None, 0, 0
-
 
 def execute_buy(position_size):
     log(f"Executing buy: {position_size:.4f} SOL")
