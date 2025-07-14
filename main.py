@@ -521,21 +521,7 @@ def send_trade(route, current_price):
         "computeUnitPriceMicroLamports": 700
     }
     
-    # Step 1: Check SOL and token account balances
-    global client
-    balance = client.get_balance(wallet_pub).value / 1e9  # SOL in SOL
-    log(f"SOL balance: {balance} SOL")
-    # Get associated token account for output mint (USDC)
-    usdc_mint = PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
-    ata = PublicKey.find_associated_token_account(wallet_pub, usdc_mint)
-    ata_balance = client.get_token_account_balance(ata).value.amount / 1e6 if client.get_token_account_balance(ata).value else 0
-    log(f"USDC ATA balance: {ata_balance} USDC")
-    required_sol = 0.00001  # Minimum SOL for fees + buffer
-    if balance < required_sol:
-        log(f"Insufficient SOL balance: {balance} SOL, need at least {required_sol} SOL")
-        return None, 0, 0
-    
-    # Step 2: Send request to Jupiter API
+    # Step 1: Send request to Jupiter API
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code != 200:
@@ -550,24 +536,55 @@ def send_trade(route, current_price):
         log(f"API request failed: {e}")
         return None, 0, 0
 
-    # Step 3-7: Decode, parse, sign, and serialize
+    # Step 2: Decode the raw transaction
     try:
         tx_data = b64decode(tx_raw)
+    except Exception as e:
+        log(f"Failed to decode transaction: {e}, Raw data: {tx_raw}")
+        return None, 0, 0
+
+    # Step 3: Parse into VersionedTransaction
+    try:
         tx = VersionedTransaction.from_bytes(tx_data)
+    except Exception as e:
+        log(f"Failed to parse transaction: {e}")
+        return None, 0, 0
+
+    # Step 4: Serialize message for signing
+    try:
         message_bytes = to_bytes_versioned(tx.message)
+    except Exception as e:
+        log(f"Message serialization failed: {e}")
+        return None, 0, 0
+
+    # Step 5: Sign the message
+    try:
         signature = keypair.sign_message(message_bytes)
+    except Exception as e:
+        log(f"Signing failed: {e}")
+        return None, 0, 0
+
+    # Step 6: Attach signature to transaction
+    try:
         tx.signatures = [signature]
+    except Exception as e:
+        log(f"Failed to set signature: {e}")
+        return None, 0, 0
+
+    # Step 7: Serialize signed transaction
+    try:
         signed_tx_data = bytes(tx)
     except Exception as e:
-        log(f"Transaction preparation failed: {e}")
+        log(f"Transaction serialization failed: {e}")
         return None, 0, 0
 
     # Step 8: Send and confirm transaction
     try:
+        global client
         result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
         tx_id = result.value
         log(f"Trade sent: tx_id={str(tx_id)}")
-        time.sleep(30)
+        time.sleep(30)  # Increased to 30 seconds for better RPC propagation
 
         def is_none_result(result):
             return result.value == [None] if result.value else True
@@ -580,34 +597,25 @@ def send_trade(route, current_price):
         confirmation = get_confirmation(tx_id)
         log(f"Confirmation raw: {confirmation.value if confirmation.value else 'No confirmation data'}")
         
-        # Robust status check with recovery
+        # Robust status check with confirmed or finalized
         if (confirmation.value and 
             len(confirmation.value) > 0 and 
             hasattr(confirmation.value[0], 'confirmation_status') and 
             ("confirmed" in str(confirmation.value[0].confirmation_status).lower() or 
-             "finalized" in str(confirmation.value[0].confirmation_status).lower())):
-            if hasattr(confirmation.value[0], 'err') and confirmation.value[0].err is None:
-                log(f"✅ Trade confirmed: tx_id={str(tx_id)}")
-                in_amount = int(route['inAmount'])
-                out_amount = int(route['outAmount'])
-                return str(tx_id), in_amount, out_amount
-            elif (hasattr(confirmation.value[0], 'err') and 
-                  isinstance(confirmation.value[0].err, tuple) and 
-                  confirmation.value[0].err[1] in [6, 18]):  # Handle Insufficient Funds (6) or Custom (18)
-                log(f"Trade failed due to error {confirmation.value[0].err}, attempting alternative route...")
-                if 'otherRoutePlans' in data and data['otherRoutePlans']:
-                    alternative_route = data['otherRoutePlans'][0]
-                    log(f"Switching to alternative route: {alternative_route}")
-                    payload["quoteResponse"] = alternative_route
-                    return send_trade(alternative_route, current_price)  # Retry with alternative
-                log(f"No alternative route available, resuming trading loop...")
-                return None, 0, 0  # Allow bot to continue rather than halt
-        status = getattr(confirmation.value[0], 'confirmation_status', 'None') if confirmation.value and len(confirmation.value) > 0 else 'No status'
-        error = getattr(confirmation.value[0], 'err', 'None') if confirmation.value and len(confirmation.value) > 0 else 'No error info'
-        log(f"Confirmation failed: status={status}, error={error}, resuming trading loop...")
-        return None, 0, 0  # Ensure bot doesn’t stop
+             "finalized" in str(confirmation.value[0].confirmation_status).lower()) and 
+            hasattr(confirmation.value[0], 'err') and 
+            confirmation.value[0].err is None):
+            log(f"✅ Trade confirmed: tx_id={str(tx_id)}")
+            in_amount = int(route['inAmount'])
+            out_amount = int(route['outAmount'])
+            return str(tx_id), in_amount, out_amount
+        else:
+            status = getattr(confirmation.value[0], 'confirmation_status', 'None') if confirmation.value and len(confirmation.value) > 0 else 'No status'
+            error = getattr(confirmation.value[0], 'err', 'None') if confirmation.value and len(confirmation.value) > 0 else 'No error info'
+            log(f"Confirmation failed: status={status}, error={error}")
+            return None, 0, 0
     except Exception as e:
-        log(f"Transaction submission failed: {e}, resuming trading loop...")
+        log(f"Transaction submission failed: {e}")
         return None, 0, 0
 
 def execute_buy(position_size):
