@@ -656,12 +656,12 @@ def set_sell_targets(position_size, entry_price):
         ]
     log(f"Sell targets: {state['sell_targets']}")
 
-def execute_sell(amount, price):
+ def execute_sell(amount, price, buy_to_sell=None):
     log(f"Executing sell: {amount:.4f} SOL @ ${price:.2f}")
     total_sol_balance = get_sol_balance()  # Fetch total SOL balance
     if not price:
         log("No price, aborting sell")
-        return
+        return None
     remaining_sol = total_sol_balance - amount
     if remaining_sol < MIN_SOL_THRESHOLD:
         amount_to_sell = max(0, total_sol_balance - MIN_SOL_THRESHOLD)
@@ -678,7 +678,7 @@ def execute_sell(amount, price):
             usdc_received = out_amount / 1e6
             fee = get_fee_estimate() * 2  # Total flat fee for buy + sell
             fee_amount = fee  # Use flat amount
-            profit = (usdc_received - fee_amount) - (sol_sold * state['entry_price'])
+            profit = (usdc_received - fee_amount) - (sol_sold * (buy_to_sell['buy_price'] if buy_to_sell else state['entry_price']))
             state['position'] -= sol_sold
             state['total_trades'] += 1
             if profit > 0:
@@ -690,13 +690,17 @@ def execute_sell(amount, price):
                 state['recent_trades'].append(profit)
             if len(state['recent_trades']) > 10:
                 state['recent_trades'].pop(0)
-            log(f"✅ Sold {sol_sold:.4f} SOL @ ${price:.2f}, Profit: ${profit:.2f}")
-            save_state()
+            log(f"✅ Sold {sol_sold:.4f} SOL @ ${price:.2f}, Profit: ${profit:.2f}, Buy Price: ${(buy_to_sell['buy_price'] if buy_to_sell else state['entry_price']):.2f}")
             if state['position'] <= 0:
                 state['position'] = 0
                 state['sell_targets'] = []
                 state['highest_price'] = 0
-                time.sleep(10)
+            save_state()
+            return tx_id
+        else:
+            log(f"Sell failed: Transaction not confirmed")
+            return None
+    return None
 
 def log_performance(portfolio_value):
     log("Logging performance...")
@@ -1112,22 +1116,24 @@ def main():
                         sell_condition = True
                         sell_amount = min(state['buy_orders'][0]['amount'], state['position'])
                         buy_to_sell = state['buy_orders'][0]
-                    if not sell_condition and price <= state['entry_price'] * (1 - 0.03) and state['buy_orders']:  # 3% stop loss
+                    if not sell_condition and price <= state['entry_price'] * (1 - 0.03) and state['buy_orders']:
                         sell_condition = True
                         sell_amount = min(state['buy_orders'][0]['amount'], state['position'])
                         buy_to_sell = state['buy_orders'][0]
                     if sell_condition:
                         sell_amount = min(sell_amount, state['position'])
                         if sell_amount > 0.001:
-                            execute_sell(sell_amount, price)
-                            time.sleep(15)  # Reduced from 10s to 15s
-                            profit = (price - buy_to_sell['buy_price']) * sell_amount - (get_fee_estimate() * 2)  # Flat fee for buy + sell
-                            state['position'] -= sell_amount
-                            state['total_profit'] = state.get('total_profit', 0) + profit
-                            state['buy_orders'].remove(buy_to_sell)
-                            state['trade_cooldown_until'] = current_time + 2
-                            log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL @ ${price:.2f}, Profit: ${profit:.2f}, Buy Price: ${buy_to_sell['buy_price']:.2f}, Timeframe: {buy_to_sell['timeframe']}")
-                            save_state()
+                            tx_id = execute_sell(sell_amount, price, buy_to_sell)
+                            if tx_id:
+                                time.sleep(15)  # Reduced from 10s to 15s
+                                state['position'] -= sell_amount
+                                state['total_profit'] = state.get('total_profit', 0) + ((price - buy_to_sell['buy_price']) * sell_amount - (get_fee_estimate() * 2))
+                                state['buy_orders'].remove(buy_to_sell)
+                                state['trade_cooldown_until'] = current_time + 2
+                                log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL @ ${price:.2f}, Profit: ${(price - buy_to_sell['buy_price']) * sell_amount - (get_fee_estimate() * 2):.2f}, Buy Price: ${buy_to_sell['buy_price']:.2f}, Timeframe: {buy_to_sell['timeframe']}, Tx: {tx_id}")
+                                save_state()
+                            else:
+                                log(f"{timeframe.capitalize()} Sell failed: {sell_amount:.4f} SOL @ ${price:.2f}, retaining order")
                             if state['position'] <= 0.001:
                                 state['position'] = 0
                                 state['highest_price'] = 0
@@ -1146,7 +1152,6 @@ def main():
             log(f"Error in main loop, continuing: {str(e)}")
             time.sleep(TRADE_INTERVAL)
             continue
-
 # Ensure get_current_rsi supports custom period (already updated)
 def tcp_health_check():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
