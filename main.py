@@ -655,8 +655,8 @@ def set_sell_targets(position_size, entry_price):
             (position_size * 0.2, entry_price * 1.08)   # 20% at 8% above entry
         ]
     log(f"Sell targets: {state['sell_targets']}")
-
- def execute_sell(amount, price, buy_to_sell=None):
+    
+def execute_sell(amount, price, buy_to_sell=None):
     log(f"Executing sell: {amount:.4f} SOL @ ${price:.2f}")
     total_sol_balance = get_sol_balance()  # Fetch total SOL balance
     if not price:
@@ -701,7 +701,7 @@ def set_sell_targets(position_size, entry_price):
             log(f"Sell failed: Transaction not confirmed")
             return None
     return None
-
+    
 def log_performance(portfolio_value):
     log("Logging performance...")
     try:
@@ -1021,7 +1021,7 @@ def main():
                 if abs(sol_balance - last_sol_balance) > 0.0001 or abs(usdc_balance - last_usdc_balance) > 0.01:
                     log(f"Balance updated: SOL {last_sol_balance:.4f} -> {sol_balance:.4f}, USDC {last_usdc_balance:.4f} -> {usdc_balance:.4f}")
                 last_sol_balance = sol_balance
-                last_usdc_balance = sol_balance
+                last_usdc_balance = usdc_balance
                 state['last_sol_balance'] = sol_balance
                 state['last_usdc_balance'] = usdc_balance
                 save_state()
