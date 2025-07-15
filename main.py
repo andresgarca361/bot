@@ -584,7 +584,7 @@ def send_trade(route, current_price):
         result = client.send_raw_transaction(signed_tx_data, opts=TxOpts(skip_preflight=False))
         tx_id = result.value
         log(f"Trade sent: tx_id={str(tx_id)}")
-        time.sleep(30)  # Increased to 30 seconds for better RPC propagation
+        time.sleep(15)  # Increased to 15 seconds for better RPC propagation
 
         def is_none_result(result):
             return result.value == [None] if result.value else True
@@ -1017,7 +1017,7 @@ def main():
                 if abs(sol_balance - last_sol_balance) > 0.0001 or abs(usdc_balance - last_usdc_balance) > 0.01:
                     log(f"Balance updated: SOL {last_sol_balance:.4f} -> {sol_balance:.4f}, USDC {last_usdc_balance:.4f} -> {usdc_balance:.4f}")
                 last_sol_balance = sol_balance
-                last_usdc_balance = usdc_balance
+                last_usdc_balance = sol_balance
                 state['last_sol_balance'] = sol_balance
                 state['last_usdc_balance'] = usdc_balance
                 save_state()
@@ -1089,9 +1089,11 @@ def main():
             # Sell Logic
             if total_sol_balance > MIN_SOL_THRESHOLD and state['position'] > 0:
                 fee = get_fee_estimate()
-                if price > state['highest_price']:
+                if price > state['highest_price'] and price > state['entry_price']:
                     state['highest_price'] = price
-                    state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - 0.01))
+                    state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - 0.015))  # 1.5% trailing stop
+                if not state.get('trailing_stop_price') and state['buy_orders']:
+                    state['trailing_stop_price'] = price * (1 - 0.03)  # 3% initial stop
                 for timeframe, sell_factor, profit_target in [('eagle', 0.2, 1), ('medium', 0.3, 5), ('long', 0.5, 20)]:
                     ind = cached_indicators[timeframe]
                     sell_condition = False
@@ -1106,7 +1108,11 @@ def main():
                             sell_amount = buy_order['amount']
                             buy_to_sell = buy_order
                             break
-                    if not sell_condition and price <= state['trailing_stop_price'] and state['buy_orders']:
+                    if not sell_condition and price <= state['trailing_stop_price'] and state['highest_price'] > state['entry_price']:
+                        sell_condition = True
+                        sell_amount = min(state['buy_orders'][0]['amount'], state['position'])
+                        buy_to_sell = state['buy_orders'][0]
+                    if not sell_condition and price <= state['entry_price'] * (1 - 0.03) and state['buy_orders']:  # 3% stop loss
                         sell_condition = True
                         sell_amount = min(state['buy_orders'][0]['amount'], state['position'])
                         buy_to_sell = state['buy_orders'][0]
@@ -1114,7 +1120,7 @@ def main():
                         sell_amount = min(sell_amount, state['position'])
                         if sell_amount > 0.001:
                             execute_sell(sell_amount, price)
-                            time.sleep(10)
+                            time.sleep(15)  # Reduced from 10s to 15s
                             profit = (price - buy_to_sell['buy_price']) * sell_amount - (get_fee_estimate() * 2)  # Flat fee for buy + sell
                             state['position'] -= sell_amount
                             state['total_profit'] = state.get('total_profit', 0) + profit
