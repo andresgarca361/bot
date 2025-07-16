@@ -1126,7 +1126,7 @@ def main():
                             tx_id = execute_sell(sell_amount, price, buy_to_sell)
                             if tx_id:
                                 time.sleep(15)  # Reduced from 10s to 15s
-                                state['position'] -= sell_amount
+                                
                                 state['total_profit'] = state.get('total_profit', 0) + ((price - buy_to_sell['buy_price']) * sell_amount - (get_fee_estimate() * 2))
                                 state['buy_orders'].remove(buy_to_sell)
                                 state['trade_cooldown_until'] = current_time + 2
@@ -1143,6 +1143,8 @@ def main():
             if current_time - last_stats_time >= 3600:
                 log_performance(portfolio_value)
                 last_stats_time = current_time
+            # Sells pending
+            log(f"Current buy_orders: {state.get('buy_orders', [])}")
 
             elapsed = time.time() - loop_start
             sleep_time = max(0, TRADE_INTERVAL - elapsed)
