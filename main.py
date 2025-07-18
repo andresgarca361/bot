@@ -623,7 +623,7 @@ def execute_buy(position_size):
     price = fetch_current_price()
     if not price:
         log("No price, aborting buy")
-        return False
+        return 0.0
     input_amount_usdc = int(position_size * price * 1e6)  # Convert to USDC lamports (ExactIn)
     log(f"Buying with {input_amount_usdc} USDC lamports (~${input_amount_usdc / 1e6:.2f})")
     route = get_route(str(USDC_MINT), str(SOL_MINT), input_amount_usdc)
@@ -631,7 +631,7 @@ def execute_buy(position_size):
         tx_id, in_amount, out_amount = send_trade(route, price)
         if tx_id:
             sol_bought = out_amount / 1e9
-            state['position'] += sol_bought  # Changed to accumulate position
+            state['position'] += sol_bought  # Only increment by actual amount received
             state['entry_price'] = price
             state['highest_price'] = price
             state['total_trades'] += 1
@@ -639,13 +639,13 @@ def execute_buy(position_size):
             save_state()
             set_sell_targets(sol_bought, price)
             time.sleep(10)
-            return True
+            return sol_bought  # Return actual amount bought!
         else:
             log("Trade failed or not confirmed, buy not recorded")
-            return False
+            return 0.0
     else:
         log("No route found, buy not executed")
-        return False
+        return 0.0
 
 def set_sell_targets(position_size, entry_price):
     log(f"Setting sell targets for {position_size:.4f} SOL")
@@ -1084,11 +1084,10 @@ def main():
                         if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:
                             position_size = (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE))
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE) + get_fee_estimate() <= total_usdc_balance and bid_ask_spread < 0.005:
-                            success = execute_buy(position_size)
+                            sol_bought = execute_buy(position_size)
                             time.sleep(10)
-                            if success:
-                                state['position'] += position_size
-                                state.setdefault('buy_orders', []).append({'amount': position_size, 'buy_price': price, 'timeframe': timeframe})
+                            if sol_bought > 0:
+                                state.setdefault('buy_orders', []).append({'amount': sol_bought, 'buy_price': price, 'timeframe': timeframe})
                             state['trade_cooldown_until'] = current_time + 2
                             if not state.get('trailing_stop_price'):
                                 state['trailing_stop_price'] = price * (1 - 0.03)
