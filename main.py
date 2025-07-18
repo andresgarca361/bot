@@ -623,7 +623,7 @@ def execute_buy(position_size):
     price = fetch_current_price()
     if not price:
         log("No price, aborting buy")
-        return
+        return False
     input_amount_usdc = int(position_size * price * 1e6)  # Convert to USDC lamports (ExactIn)
     log(f"Buying with {input_amount_usdc} USDC lamports (~${input_amount_usdc / 1e6:.2f})")
     route = get_route(str(USDC_MINT), str(SOL_MINT), input_amount_usdc)
@@ -639,6 +639,13 @@ def execute_buy(position_size):
             save_state()
             set_sell_targets(sol_bought, price)
             time.sleep(10)
+            return True
+        else:
+            log("Trade failed or not confirmed, buy not recorded")
+            return False
+    else:
+        log("No route found, buy not executed")
+        return False
 
 def set_sell_targets(position_size, entry_price):
     log(f"Setting sell targets for {position_size:.4f} SOL")
@@ -1077,10 +1084,11 @@ def main():
                         if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:
                             position_size = (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE))
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE) + get_fee_estimate() <= total_usdc_balance and bid_ask_spread < 0.005:
-                            execute_buy(position_size)
+                            success = execute_buy(position_size)
                             time.sleep(10)
-                            state['position'] += position_size
-                            state.setdefault('buy_orders', []).append({'amount': position_size, 'buy_price': price, 'timeframe': timeframe})
+                            if success:
+                                state['position'] += position_size
+                                state.setdefault('buy_orders', []).append({'amount': position_size, 'buy_price': price, 'timeframe': timeframe})
                             state['trade_cooldown_until'] = current_time + 2
                             if not state.get('trailing_stop_price'):
                                 state['trailing_stop_price'] = price * (1 - 0.03)
