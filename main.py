@@ -1132,12 +1132,21 @@ def main():
                         if sell_amount > 0.001:
                             tx_id = execute_sell(sell_amount, price, buy_to_sell)
                             if tx_id:
-                                time.sleep(15)  # Reduced from 10s to 15s
-                                
-                                state['total_profit'] = state.get('total_profit', 0) + ((price - buy_to_sell['buy_price']) * sell_amount - (get_fee_estimate() * 2))
-                                state['buy_orders'].remove(buy_to_sell)
+                                time.sleep(15)
+                                remaining_amount = sell_amount
+                                while remaining_amount > 0 and state.get('buy_orders'):
+                                    # Find the best matching order based on amount and price
+                                    buy_to_sell = min(state['buy_orders'], key=lambda x: abs(x['amount'] - remaining_amount) + abs(x['buy_price'] - price), default=None)
+                                    if buy_to_sell and buy_to_sell['amount'] <= remaining_amount:
+                                        profit = (price - buy_to_sell['buy_price']) * buy_to_sell['amount'] - (get_fee_estimate() * 2)
+                                        state['total_profit'] = state.get('total_profit', 0) + profit
+                                        state['buy_orders'].remove(buy_to_sell)
+                                        remaining_amount -= buy_to_sell['amount']
+                                        log(f"Removed buy_order: {buy_to_sell}, remaining amount: {remaining_amount:.4f}, profit: ${profit:.2f}")
+                                    else:
+                                        break
                                 state['trade_cooldown_until'] = current_time + 2
-                                log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL @ ${price:.2f}, Profit: ${(price - buy_to_sell['buy_price']) * sell_amount - (get_fee_estimate() * 2):.2f}, Buy Price: ${buy_to_sell['buy_price']:.2f}, Timeframe: {buy_to_sell['timeframe']}, Tx: {tx_id}")
+                                log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL @ ${price:.2f}, Profit: ${(price - (buy_to_sell['buy_price'] if buy_to_sell else state['entry_price'])) * sell_amount - (get_fee_estimate() * 2):.2f}, Buy Price: ${(buy_to_sell['buy_price'] if buy_to_sell else state['entry_price']):.2f}, Timeframe: {buy_to_sell['timeframe'] if buy_to_sell else 'N/A'}, Tx: {tx_id}")
                                 save_state()
                             else:
                                 log(f"{timeframe.capitalize()} Sell failed: {sell_amount:.4f} SOL @ ${price:.2f}, retaining order")
