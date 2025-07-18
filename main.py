@@ -631,7 +631,7 @@ def execute_buy(position_size):
         tx_id, in_amount, out_amount = send_trade(route, price)
         if tx_id:
             sol_bought = out_amount / 1e9
-            state['position'] += sol_bought  # Only increment by actual amount received
+            state['position'] += sol_bought  # Only increment by exact amount received!
             state['entry_price'] = price
             state['highest_price'] = price
             state['total_trades'] += 1
@@ -639,7 +639,7 @@ def execute_buy(position_size):
             save_state()
             set_sell_targets(sol_bought, price)
             time.sleep(10)
-            return sol_bought  # Return actual amount bought!
+            return sol_bought  # RETURN THE REAL AMOUNT!
         else:
             log("Trade failed or not confirmed, buy not recorded")
             return 0.0
