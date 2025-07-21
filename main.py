@@ -510,7 +510,7 @@ def get_route(from_mint, to_mint, amount):
 
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5))
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=15))
 def send_trade(route, current_price):
     log("Sending trade...")
     url = "https://quote-api.jup.ag/v6/swap"
