@@ -1080,41 +1080,51 @@ def main():
                         rsi_condition = ind['rsi'] < 35
                     if rsi_condition and check_buy_signal(price, ind['rsi'], ind['macd_line'], ind['signal_line'], ind['vwap'], ind['lower_bb'], ind['momentum'], ind['atr'], ind['avg_atr'], timeframe):
                         target_usdc = portfolio_value * 0.1
-                        position_size = min(target_usdc / price, (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE)))  # Adjusted for flat fee
+                        position_size = min(target_usdc / price, (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE)))
                         if position_size < 0.001 and total_usdc_balance > MIN_TRADE_USD:
                             position_size = (total_usdc_balance - get_fee_estimate()) / (price * (1 + SLIPPAGE))
                         if position_size > 0.001 and position_size * price * (1 + SLIPPAGE) + get_fee_estimate() <= total_usdc_balance and bid_ask_spread < 0.005:
-                            sol_bought = execute_buy(position_size)
-                            time.sleep(10)
-                            if sol_bought > 0:
-                                state.setdefault('buy_orders', []).append({'amount': sol_bought, 'buy_price': price, 'timeframe': timeframe})
-                            state['trade_cooldown_until'] = current_time + 2
-                            if not state.get('trailing_stop_price'):
-                                state['trailing_stop_price'] = price * (1 - 0.03)
-                            if state['position'] <= 0.001:  # Reset if position was previously closed
-                                state['trailing_stop_price'] = 0
-                            state['highest_price'] = price
-                            log(f"{timeframe.capitalize()} Buy: {position_size:.4f} SOL, Position: {state['position']:.4f} SOL, RSI: {ind['rsi']:.2f}")
-                            save_state()
+                            tx_id, in_amount, out_amount = send_trade(get_route(str(USDC_MINT), str(SOL_MINT), int(position_size * price * 1e6)), price)
+                            if tx_id:
+                                confirmation = send_trade.__closure__[0].cell_contents.get_confirmation(tx_id)  # Access get_confirmation
+                                if (confirmation.value and len(confirmation.value) > 0 and 
+                                    hasattr(confirmation.value[0], 'confirmation_status') and 
+                                    ("confirmed" in str(confirmation.value[0].confirmation_status).lower() or 
+                                     "finalized" in str(confirmation.value[0].confirmation_status).lower()) and 
+                                    confirmation.value[0].err is None):
+                                    sol_bought = out_amount / 1e9
+                                    state['position'] += sol_bought
+                                    state.setdefault('buy_orders', []).append({'amount': sol_bought, 'buy_price': price, 'timeframe': timeframe})
+                                    state['trade_cooldown_until'] = current_time + 2
+                                    if not state.get('trailing_stop_price'):
+                                        state['trailing_stop_price'] = price * (1 - 0.03)
+                                    if state['position'] <= 0.001:
+                                        state['trailing_stop_price'] = 0
+                                    state['highest_price'] = price
+                                    log(f"{timeframe.capitalize()} Buy: {position_size:.4f} SOL, Position: {state['position']:.4f} SOL, RSI: {ind['rsi']:.2f}, Tx: {tx_id}")
+                                    save_state()
+                                else:
+                                    log(f"{timeframe.capitalize()} Buy confirmation failed: {position_size:.4f} SOL @ ${price:.2f}, Tx: {tx_id}")
+                            else:
+                                log(f"{timeframe.capitalize()} Buy failed: {position_size:.4f} SOL @ ${price:.2f}")
 
             # Sell Logic
             if total_sol_balance > MIN_SOL_THRESHOLD and state['position'] > 0:
                 fee = get_fee_estimate()
                 if price > state['highest_price'] and price > state['entry_price']:
                     state['highest_price'] = price
-                    state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - 0.015))  # 1.5% trailing stop
+                    state['trailing_stop_price'] = max(state['trailing_stop_price'], price * (1 - 0.015))
                 if not state.get('trailing_stop_price') and state['buy_orders']:
-                    state['trailing_stop_price'] = price * (1 - 0.03)  # 3% initial stop
-                for timeframe, sell_factor, profit_target in [('eagle', 0.2, 1), ('medium', 0.3, 5), ('long', 0.5, 20)]:
+                    state['trailing_stop_price'] = price * (1 - 0.03)
+                for timeframe, sell_factor, profit_target in [('eagle', 0.2, 0.5), ('medium', 0.3, 5), ('long', 0.5, 20)]:
                     ind = cached_indicators[timeframe]
                     sell_condition = False
                     sell_amount = 0
                     buy_to_sell = None
                     for buy_order in state.get('buy_orders', []):
-                        buy_profit_target = {'eagle': 1, 'medium': 5, 'long': 20}[buy_order['timeframe']]
+                        buy_profit_target = {'eagle': 0.5, 'medium': 5, 'long': 20}[buy_order['timeframe']]
                         net_profit_percent = ((price - buy_order['buy_price'] - get_fee_estimate() * 2) / buy_order['buy_price'] * 100) if buy_order['buy_price'] else 0
-                        buy_profit_target = {'eagle': 0.5, 'medium': 5, 'long': 20}[buy_order['timeframe']]  # Explicitly define targets
-                        if net_profit_percent >= buy_profit_target:  # Use timeframe-specific target
+                        if net_profit_percent >= buy_profit_target:
                             sell_condition = True
                             sell_amount = buy_order['amount']
                             buy_to_sell = buy_order
@@ -1130,36 +1140,35 @@ def main():
                     if sell_condition:
                         sell_amount = min(sell_amount, state['position'])
                         if sell_amount > 0.001:
-                            tx_id = execute_sell(sell_amount, price, buy_to_sell)
+                            tx_id, in_amount, out_amount = send_trade(get_route(str(SOL_MINT), str(USDC_MINT), int(sell_amount * 1e9)), price)
                             if tx_id:
-                                time.sleep(15)
-                                remaining_amount = sell_amount
-                                while remaining_amount > 0 and state.get('buy_orders'):
-                                    # Find the best matching order based on amount and price
-                                    buy_to_sell = min(state['buy_orders'], key=lambda x: abs(x['amount'] - remaining_amount) + abs(x['buy_price'] - price), default=None)
-                                    if buy_to_sell and buy_to_sell['amount'] <= remaining_amount:
-                                        profit = (price - buy_to_sell['buy_price']) * buy_to_sell['amount'] - (get_fee_estimate() * 2)
-                                        state['total_profit'] = state.get('total_profit', 0) + profit
-                                        state['buy_orders'].remove(buy_to_sell)
-                                        remaining_amount -= buy_to_sell['amount']
-                                        log(f"Removed buy_order: {buy_to_sell}, remaining amount: {remaining_amount:.4f}, profit: ${profit:.2f}")
-                                    else:
-                                        break
-                                state['trade_cooldown_until'] = current_time + 2
-                                log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL @ ${price:.2f}, Profit: ${(price - (buy_to_sell['buy_price'] if buy_to_sell else state['entry_price'])) * sell_amount - (get_fee_estimate() * 2):.2f}, Buy Price: ${(buy_to_sell['buy_price'] if buy_to_sell else state['entry_price']):.2f}, Timeframe: {buy_to_sell['timeframe'] if buy_to_sell else 'N/A'}, Tx: {tx_id}")
-                                save_state()
+                                confirmation = send_trade.__closure__[0].cell_contents.get_confirmation(tx_id)
+                                if (confirmation.value and len(confirmation.value) > 0 and 
+                                    hasattr(confirmation.value[0], 'confirmation_status') and 
+                                    ("confirmed" in str(confirmation.value[0].confirmation_status).lower() or 
+                                     "finalized" in str(confirmation.value[0].confirmation_status).lower()) and 
+                                    confirmation.value[0].err is None):
+                                    sol_sold = in_amount / 1e9
+                                    usdc_received = out_amount / 1e6
+                                    profit = (usdc_received - (get_fee_estimate() * 2)) - (sol_sold * buy_to_sell['buy_price'])
+                                    state['position'] -= sol_sold
+                                    state['total_profit'] = state.get('total_profit', 0) + profit
+                                    state['buy_orders'].remove(buy_to_sell)
+                                    state['trade_cooldown_until'] = current_time + 2
+                                    log(f"{timeframe.capitalize()} Sell: {sell_amount:.4f} SOL @ ${price:.2f}, Profit: ${profit:.2f}, Buy Price: ${buy_to_sell['buy_price']:.2f}, Timeframe: {buy_to_sell['timeframe']}, Tx: {tx_id}")
+                                    save_state()
+                                    if state['position'] <= 0.001:
+                                        state['position'] = 0
+                                        state['highest_price'] = 0
+                                        state['trailing_stop_price'] = 0
+                                else:
+                                    log(f"{timeframe.capitalize()} Sell confirmation failed: {sell_amount:.4f} SOL @ ${price:.2f}, Tx: {tx_id}")
                             else:
-                                log(f"{timeframe.capitalize()} Sell failed: {sell_amount:.4f} SOL @ ${price:.2f}, retaining order")
-                            if state['position'] <= 0.001:
-                                state['position'] = 0
-                                state['highest_price'] = 0
-                                state['trailing_stop_price'] = 0
-                                state['buy_orders'] = []
+                                log(f"{timeframe.capitalize()} Sell failed: {sell_amount:.4f} SOL @ ${price:.2f}")
 
             if current_time - last_stats_time >= 3600:
                 log_performance(portfolio_value)
                 last_stats_time = current_time
-            # Sells pending
             log(f"Current buy_orders: {state.get('buy_orders', [])}")
 
             elapsed = time.time() - loop_start
